@@ -268,10 +268,14 @@ function donut(segs, size=150){
     <text x="${r}" y="${r-2}" text-anchor="middle" fill="#e6eef5" font-size="22" font-weight="700">${tot}</text>
     <text x="${r}" y="${r+16}" text-anchor="middle" fill="#8ba0b3" font-size="10">total</text></svg>`;
 }
-function legend(segs){ return `<div class="legend">`+segs.filter(s=>s.value>0).map(s=>`<span><i style="background:${s.color}"></i>${esc(s.label)} · ${s.value}</span>`).join("")+`</div>`; }
-function hbars(items, maxLabel=130){
+function legend(segs, kind){
+  return `<div class="legend">`+segs.filter(s=>s.value>0).map(s=>
+    `<span ${kind?`class="drill" data-drill="${kind}" data-key="${esc(s.key||s.label)}"`:""}><i style="background:${s.color}"></i>${esc(s.label)} · ${s.value}</span>`).join("")+`</div>`;
+}
+function hbars(items){
   const max=Math.max(1,...items.map(i=>i.value));
-  return items.map(i=>`<div class="hbar-row"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(i.label)}">${esc(i.label)}</div>
+  return items.map(i=>`<div class="hbar-row ${i.drill?'drill':''}" ${i.drill?`data-drill="${i.drill}" data-key="${esc(i.key)}"`:''}>
+    <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(i.label)}">${esc(i.label)}</div>
     <div class="hbar-track"><div class="hbar-fill" style="width:${Math.round(i.value/max*100)}%;background:${i.color||'#2ee6a6'}"></div></div>
     <div class="hbar-val">${i.sfx?i.value+i.sfx:i.value}</div></div>`).join("");
 }
@@ -307,7 +311,7 @@ function renderGraficos(){
                  {label:"Credit Card",value:f.filter(x=>x.tipo==="Credit Card").length,color:"#b98bff"}];
   // 3) avance por bookkeeper
   const byBk=new Map(); f.forEach(x=>{ const b=x.bookkeeper||x.bookkeeper_default||"(s/a)"; (byBk.get(b)||byBk.set(b,[]).get(b)).push(x); });
-  const bkBars=[...byBk.entries()].map(([b,rows],i)=>({label:b,value:stats(rows).pct,sfx:"%",color:BK_COLORS[i%BK_COLORS.length]})).sort((a,b)=>b.value-a.value);
+  const bkBars=[...byBk.entries()].map(([b,rows],i)=>({label:b,value:stats(rows).pct,sfx:"%",color:BK_COLORS[i%BK_COLORS.length],drill:"bookkeeper",key:b})).sort((a,b)=>b.value-a.value);
   // 4) trabajo por semana (fecha_completado)
   const wk=new Map(); f.forEach(x=>{ if(x.fecha_completado&&x.estado==="Reconciliado"){ const w=isoWeek(x.fecha_completado); const o=wk.get(w.key)||{label:w.label,value:0}; o.value++; wk.set(w.key,o);} });
   const wkArr=[...wk.entries()].sort((a,b)=>a[0].localeCompare(b[0])).slice(-10).map(e=>e[1]);
@@ -315,12 +319,12 @@ function renderGraficos(){
   const cliMap=new Map(); f.forEach(x=>{ const o=cliMap.get(x.cliente_id)||{tot:0,rec:0,inact:0}; o.tot++; if(x.estado==="Reconciliado")o.rec++; if(x.estado==="Inactive")o.inact++; cliMap.set(x.cliente_id,o); });
   let cliDone=0,cliParcial=0,cliCero=0;
   cliMap.forEach(o=>{ const activ=o.tot-o.inact; if(activ>0&&o.rec>=activ)cliDone++; else if(o.rec>0)cliParcial++; else cliCero++; });
-  const cliSeg=[{label:"Terminados",value:cliDone,color:"#2ee6a6"},{label:"En curso",value:cliParcial,color:"#ffb23e"},{label:"Sin arrancar",value:cliCero,color:"#ff6b6b"}];
+  const cliSeg=[{label:"Terminados",value:cliDone,color:"#2ee6a6",key:"terminados"},{label:"En curso",value:cliParcial,color:"#ffb23e",key:"encurso"},{label:"Sin arrancar",value:cliCero,color:"#ff6b6b",key:"cero"}];
   // 6) top clientes por # cuentas
   const cntMap=new Map(); f.forEach(x=>cntMap.set(x.cliente,(cntMap.get(x.cliente)||0)+1));
-  const topCli=[...cntMap.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10).map(([l,v])=>({label:l,value:v,color:"#46d5e6"}));
+  const topCli=[...cntMap.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10).map(([l,v])=>({label:l,value:v,color:"#46d5e6",drill:"cliente",key:l}));
   // 7) checklist (conciliado/revisado/memos)
-  const chk=BOOLS.map((b,i)=>({label:b[1],value:f.filter(x=>x[b[0]]).length,color:BK_COLORS[i]}));
+  const chk=BOOLS.map((b,i)=>({label:b[1],value:f.filter(x=>x[b[0]]).length,color:BK_COLORS[i],drill:"check",key:b[0]}));
   // 8) avance por período (histórico) — usa el actual; si hubiera más, se agregan
   const curP=S.periodos.find(p=>p.id===S.periodo_id);
   const perBars=[{label:curP?curP.etiqueta.slice(2):"actual",value:stats(f).pct,sfx:"%",color:"#2ee6a6"}];
@@ -328,15 +332,15 @@ function renderGraficos(){
   const banner = S.fbk ? `<div class="scope-banner">Mostrando datos de <b>${esc(S.fbk)}</b> · <a href="#" id="scope-clear">ver todos</a></div>` : "";
   $("#panel").innerHTML=banner+`<div class="charts">
     <div class="chart-card"><h3>Estado de las cuentas</h3>
-      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">${donut(estSeg)}<div style="flex:1;min-width:150px">${legend(estSeg)}</div></div></div>
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">${donut(estSeg)}<div style="flex:1;min-width:150px">${legend(estSeg,'estado')}</div></div></div>
 
     <div class="chart-card"><h3>Cuentas por tipo</h3>
-      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">${donut(tipoSeg)}<div style="flex:1;min-width:120px">${legend(tipoSeg)}</div></div></div>
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">${donut(tipoSeg)}<div style="flex:1;min-width:120px">${legend(tipoSeg,'tipo')}</div></div></div>
 
     <div class="chart-card"><h3>Clientes terminados</h3>
       <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
         <div><div class="big-stat">${cliDone}</div><div class="big-sub">de ${cliMap.size} clientes</div></div>
-        <div style="flex:1;min-width:140px">${legend(cliSeg)}</div></div></div>
+        <div style="flex:1;min-width:140px">${legend(cliSeg,'cliente-bucket')}</div></div></div>
 
     <div class="chart-card wide"><h3>Avance por bookkeeper</h3>${hbars(bkBars)}</div>
 
@@ -385,6 +389,37 @@ $("#f-bk").addEventListener("change",(e)=>{ S.fbk=e.target.value; renderAll(); }
 $("#f-tipo").addEventListener("change",(e)=>{ S.ftipo=e.target.value; renderAll(); });
 $("#sel-periodo").addEventListener("change", async (e)=>{ S.periodo_id=Number(e.target.value); await load(); });
 $("#btn-refresh").addEventListener("click", async ()=>{ await load(); toast("Actualizado ✓"); });
+
+/* ---------------- DRILL-DOWN desde los gráficos ---------------- */
+$("#panel").addEventListener("click",(e)=>{
+  const el=e.target.closest("[data-drill]"); if(!el) return;
+  const kind=el.dataset.drill, key=el.dataset.key;
+  if(kind==="bookkeeper"){ S.fbk=key; renderAll(); return; }   // barra bookkeeper → filtra a esa persona
+  const f=scope();
+  if(kind==="cliente-bucket"){
+    const m=new Map();
+    f.forEach(x=>{ const o=m.get(x.cliente_id)||{nm:x.cliente,bk:x.bookkeeper_default,tot:0,rec:0,inact:0};
+      o.tot++; if(x.estado==="Reconciliado")o.rec++; if(x.estado==="Inactive")o.inact++; m.set(x.cliente_id,o); });
+    const arr=[...m.values()].filter(o=>{ const activ=o.tot-o.inact;
+      if(key==="terminados") return activ>0&&o.rec>=activ;
+      if(key==="encurso")    return o.rec>0&&!(activ>0&&o.rec>=activ);
+      return o.rec===0; }).sort((a,b)=>a.nm.localeCompare(b.nm));
+    const titles={terminados:"Clientes terminados",encurso:"Clientes en curso",cero:"Clientes sin arrancar"};
+    drillList(titles[key], arr.map(o=>`<span class="di-l"><b>${esc(o.nm)}</b> <span class="muted">${esc(o.bk||"—")}</span></span><span class="muted">${o.rec}/${o.tot-o.inact}</span>`));
+    return;
+  }
+  let rows=[], title="";
+  if(kind==="estado"){ title=`Cuentas · ${key}`; rows=f.filter(x=>x.estado===key); }
+  else if(kind==="tipo"){ title=`Cuentas · ${key}`; rows=f.filter(x=>x.tipo===key); }
+  else if(kind==="check"){ const lbl=(BOOLS.find(b=>b[0]===key)||[0,key])[1]; title=`${lbl} ✓`; rows=f.filter(x=>x[key]); }
+  else if(kind==="cliente"){ title=key; rows=f.filter(x=>x.cliente===key); }
+  rows.sort((a,b)=>a.cliente.localeCompare(b.cliente)||a.cuenta.localeCompare(b.cuenta));
+  drillList(title, rows.map(x=>`<span class="di-l"><b>${esc(x.cuenta)}</b> <span class="muted">${esc(x.cliente)}</span></span><span class="di-r"><span class="dot" style="background:${EST_COLOR[x.estado]||'#888'}"></span>${esc(x.estado)}</span>`));
+});
+function drillList(title, lines){
+  openModal(`${title} · ${lines.length}`,
+    `<div class="drill-list">${lines.length?lines.map(l=>`<div class="drill-item">${l}</div>`).join(""):'<p class="muted">Nada acá.</p>'}</div>`);
+}
 
 /* ---------------- MODALES ---------------- */
 function openModal(t,b){ $("#modal-title").textContent=t; $("#modal-body").innerHTML=b; $("#modal").classList.remove("hidden"); }
