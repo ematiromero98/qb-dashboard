@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>QB Dashboard — Chermisqui</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ==================== LOGIN ==================== -->
+  <div id="gate" class="gate">
+    <form id="gate-form" class="gate-card" autocomplete="off">
+      <div class="gate-logo">QB<span>·</span>Dashboard</div>
+      <p class="gate-sub">Control de conciliaciones · Chermisqui</p>
+      <input id="pin" type="password" inputmode="numeric" placeholder="PIN de acceso" autocomplete="off" />
+      <label class="gate-remember"><input type="checkbox" id="remember" /> Recordar en esta compu</label>
+      <button type="submit" id="gate-btn">Entrar</button>
+      <div id="gate-err" class="gate-err"></div>
+    </form>
+  </div>
+
+  <!-- ==================== APP ==================== -->
+  <div id="app" class="app hidden">
+    <header class="topbar">
+      <div class="brand">QB<span>·</span>Dashboard <em id="periodo-label"></em></div>
+      <div class="top-actions">
+        <select id="sel-periodo" title="Período"></select>
+        <button id="btn-nuevo-periodo" class="btn ghost" title="Crear un nuevo mes arrastrando las cuentas activas">+ Período</button>
+        <button id="btn-refresh" class="btn ghost" title="Refrescar ahora">↻</button>
+        <button id="btn-export" class="btn ghost">Exportar CSV</button>
+        <button id="btn-salir" class="btn ghost">Salir</button>
+      </div>
+    </header>
+
+    <!-- KPIs -->
+    <section id="kpis" class="kpis"></section>
+
+    <!-- Barra de filtros / vistas -->
+    <section class="toolbar">
+      <div class="tabs" id="tabs">
+        <button class="tab active" data-view="todo">Todo</button>
+        <button class="tab" data-view="pendientes">Pendientes de Hacer</button>
+        <button class="tab" data-view="acceso">Pend. de Acceso</button>
+        <button class="tab" data-view="escalar">Escalar</button>
+        <button class="tab" data-view="falta">Falta Doc</button>
+        <button class="tab" data-view="nueva">Nueva Cuenta</button>
+        <button class="tab" data-view="bookkeeper">Por Bookkeeper</button>
+      </div>
+      <div class="filters">
+        <input id="q" type="search" placeholder="Buscar cliente o cuenta…" />
+        <select id="f-bk"><option value="">Todos los bookkeepers</option></select>
+        <select id="f-tipo">
+          <option value="">Bank + Credit Card</option>
+          <option value="Bank">Bank</option>
+          <option value="Credit Card">Credit Card</option>
+        </select>
+        <button id="btn-add-cuenta" class="btn ghost">+ Cliente / Cuenta</button>
+      </div>
+    </section>
+
+    <!-- Grilla -->
+    <main class="grid-wrap">
+      <table id="grid" class="grid">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+      <div id="empty" class="empty hidden">Sin filas para este filtro.</div>
+    </main>
+
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <!-- ===== Modal genérico ===== -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><span id="modal-title"></span><button id="modal-x">✕</button></div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
