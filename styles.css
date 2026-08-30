@@ -166,12 +166,84 @@ td.saving{box-shadow:inset 0 0 0 2px var(--menta)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .toast.err{border-color:var(--red);color:var(--red)}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center;z-index:60}
-.modal-card{width:min(440px,94vw);background:var(--panel);border:1px solid var(--line2);border-radius:14px;box-shadow:var(--shadow)}
-.modal-head{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);font-weight:700}
+.modal-card{width:min(560px,94vw);background:var(--panel);border:1px solid var(--line2);border-radius:14px;box-shadow:var(--shadow);max-height:92vh;display:flex;flex-direction:column}
+.modal-head{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);font-weight:700;flex:0 0 auto}
 .modal-head button{background:none;border:0;color:var(--muted);font-size:16px;cursor:pointer}
-#modal-body{padding:18px}
+#modal-body{padding:18px;overflow:auto}
 #modal-body label{display:block;color:var(--muted);font-size:12px;margin:10px 0 5px}
 #modal-body input,#modal-body select{width:100%}
 #modal-body .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 #modal-body .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
 .muted{color:var(--muted)}
+
+/* ============ MÓDULO SUELDOS / EVALUACIONES ============ */
+.rrhh{position:fixed;inset:0;z-index:70;background:var(--bg);display:flex;flex-direction:column;overflow:hidden}
+.rr-load{margin:auto;color:var(--muted)}
+.rr-top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex:0 0 auto;padding:14px 22px;
+  background:linear-gradient(var(--panel),var(--bg2));border-bottom:1px solid var(--line)}
+.rr-brand{font-weight:700;font-size:17px}
+.rr-brand em{font-style:normal;color:var(--amber);font-weight:600;font-size:11.5px;margin-left:10px;text-transform:uppercase;letter-spacing:.08em}
+.rr-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.rr-nomina{color:var(--muted);font-size:12.5px}.rr-nomina b{color:var(--menta)}
+.rr-tabs{display:flex;gap:6px;padding:12px 22px 0;flex:0 0 auto;flex-wrap:wrap}
+.rr-tab{padding:8px 15px;border-radius:999px;border:1px solid var(--line2);background:transparent;color:var(--muted);cursor:pointer;font-size:12.5px;font-weight:600}
+.rr-tab:hover{color:var(--txt)}
+.rr-tab.active{background:var(--menta-soft);color:var(--menta);border-color:var(--menta)}
+.rr-body{flex:1 1 auto;min-height:0;overflow:auto;padding:18px 22px 46px}
+.rr-note{color:var(--muted);font-size:13px;margin-bottom:16px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.btn.sm{padding:6px 10px;font-size:11.5px}
+
+/* Equipo */
+.rr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+.rr-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:11px}
+.rr-card.add{align-items:center;justify-content:center;color:var(--muted);border-style:dashed;cursor:pointer;min-height:120px;font-weight:600}
+.rr-card.add:hover{color:var(--menta);border-color:var(--menta)}
+.rr-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.rr-name{font-weight:700;font-size:15.5px}
+.rr-rol{color:var(--muted);font-size:12px;margin-top:2px}
+.rr-sueldo{font-family:"IBM Plex Mono",ui-monospace,monospace;font-weight:700;font-size:22px;color:var(--menta);white-space:nowrap;text-align:right}
+.rr-sueldo span{display:block;font-size:9.5px;color:var(--muted2);font-weight:500;letter-spacing:.1em}
+.rr-meta{display:flex;flex-wrap:wrap;gap:6px}
+.rr-badge{font-size:10.5px;padding:3px 8px;border-radius:6px;border:1px solid var(--line2);color:var(--muted)}
+.rr-badge.alt{color:var(--muted2)}
+.rr-tareas{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.rr-chip{font-size:11px;padding:4px 9px;border-radius:999px;background:var(--panel2);border:1px solid var(--line2);color:var(--txt);cursor:pointer}
+.rr-chip b{color:var(--muted2)}
+.rr-chip:hover b{color:var(--red)}
+.rr-chip.add{color:var(--menta);border-style:dashed;border-color:var(--menta)}
+.rr-coment{font-size:12px;color:var(--muted);background:var(--bg2);border-radius:8px;padding:9px 11px;border-left:3px solid var(--line2)}
+.rr-card-actions{display:flex;gap:8px;margin-top:auto;flex-wrap:wrap}
+
+/* Aumentos */
+.rr-aum{display:flex;flex-direction:column;gap:10px}
+.aum-row{display:grid;grid-template-columns:180px 1fr auto;gap:14px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.aum-persona b{display:block;font-size:13.5px}.aum-persona span{color:var(--muted);font-size:11.5px}
+.aum-line{display:flex;align-items:center;gap:6px;flex-wrap:wrap;overflow-x:auto}
+.aum-chip{display:inline-flex;align-items:center;gap:6px;font-family:"IBM Plex Mono",monospace;font-size:12px;padding:5px 10px;border-radius:8px;background:var(--bg2);border:1px solid var(--line2);white-space:nowrap}
+.aum-chip .aum-f{color:var(--muted2)}
+.aum-chip i{font-style:normal;font-size:10.5px;font-weight:700}
+.aum-chip.up i{color:var(--menta)} .aum-chip.down i{color:var(--red)}
+.aum-chip.ofi{border-color:var(--menta);box-shadow:inset 0 0 0 1px var(--menta-soft)}
+.aum-arrow{color:var(--muted2)}
+@media(max-width:640px){.aum-row{grid-template-columns:1fr}}
+
+/* Evaluación */
+.eval-table,.escala-table{width:100%;border-collapse:separate;border-spacing:0;min-width:720px}
+.eval-table th,.escala-table th{position:sticky;top:0;background:var(--bg2);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.3px;padding:10px 8px;border-bottom:2px solid var(--line2);text-align:center;white-space:nowrap;z-index:2}
+.eval-table th.l,.escala-table th.l{text-align:left}.escala-table th.r,.escala-table td.r{text-align:right}
+.eval-table td,.escala-table td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:center;vertical-align:middle}
+.eval-table td.l,.escala-table td{text-align:left}
+.eval-table tbody tr{cursor:pointer}
+.eval-table tbody tr:hover{background:var(--menta-soft)}
+.score{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:7px;font-weight:700;font-size:12.5px}
+.score.s1{background:rgba(255,107,107,.16);color:#ff6b6b}
+.score.s2{background:rgba(255,159,67,.16);color:#ff9f43}
+.score.s3{background:rgba(255,178,62,.16);color:#ffb23e}
+.score.s4{background:rgba(90,169,255,.16);color:#5aa9ff}
+.score.s5{background:var(--menta-soft);color:var(--menta)}
+.escala-table td{border-bottom:1px solid var(--line)}
+.eval-scores{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px}
+.ev-sc{display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:7px 11px;font-size:12.5px}
+.ev-sc select{width:64px}
+#modal-body textarea{width:100%;background:var(--bg2);color:var(--txt);border:1px solid var(--line2);border-radius:9px;padding:8px 10px;font-family:inherit;font-size:12.5px;resize:vertical}
+@media(max-width:520px){.eval-scores{grid-template-columns:1fr}}

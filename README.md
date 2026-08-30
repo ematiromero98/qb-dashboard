@@ -24,6 +24,21 @@ abren un link, ponen un PIN y cargan todo ahí, **todos sobre el mismo dato y en
 - Alta de clientes y cuentas, filtros, buscador, export a CSV y **cambio de PIN** desde la UI.
 - Refresco automático cada 15 s → multiusuario en vivo.
 
+### Módulo Sueldos & Evaluaciones (🔒 solo jefes)
+
+Área **confidencial** detrás de un **segundo PIN** (`qb_config.pin_admin`). Los bookkeepers con el
+PIN normal no la ven. Reemplaza el Excel de sueldos y el papel de trabajo de evaluación:
+
+- **Equipo**: legajo por persona (rol, banda, ingreso/antigüedad, sueldo USD, tareas a cargo, comentarios).
+- **Aumentos**: historial/línea de tiempo del sueldo con los deltas; ventanas oficiales en **Junio y Diciembre**.
+- **Evaluación**: matriz semestral (Jun/Dic) con 5 competencias (1–5), promedio, nivel y feedback detallado
+  (fortalezas, mejoras, compromisos, etc.).
+- **Escala salarial**: las 5 bandas (Trainee → Coordinación, USD 500 → 2000).
+
+Tablas: `qb_personas`, `qb_sueldos`, `qb_tareas`, `qb_evaluaciones`, `qb_bandas` (ver `0002_qb_sueldos.sql`).
+Acciones de la Edge Function con prefijo `rrhh_` (validadas contra el PIN de jefes). Front en `rrhh.js`.
+**PIN de jefes inicial: `jefes2026`** — cambiable desde el botón "PIN jefes" del módulo.
+
 ## Arquitectura
 
 ```
