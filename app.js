@@ -75,7 +75,9 @@ function scheduleRefresh(){
 /* ---------------- RENDER ROOT ---------------- */
 function renderAll(){
   S.lastSig=sig();
-  renderPeriodos(); renderKPIs(); renderTabs();
+  renderPeriodos(); renderKPIs(); renderTabs(); renderView();
+}
+function renderView(){
   const grid=$("#grid"), panel=$("#panel"), empty=$("#empty");
   const isGrid = ["todo","pendientes","acceso","escalar","falta","nueva"].includes(S.view);
   grid.classList.toggle("hidden", !isGrid);
@@ -85,6 +87,13 @@ function renderAll(){
   else if(S.view==="bookkeeper") renderBookkeeper();
   else if(S.view==="empresa") renderEmpresa();
   else if(S.view==="graficos") renderGraficos();
+}
+// scope global (bookkeeper + tipo): mueve KPIs y gráficos a la persona elegida
+function scope(){
+  let f=S.filas.slice();
+  if(S.ftipo) f=f.filter(x=>x.tipo===S.ftipo);
+  if(S.fbk)   f=f.filter(x=>x.bookkeeper===S.fbk || (!x.bookkeeper && x.bookkeeper_default===S.fbk));
+  return f;
 }
 
 function renderPeriodos(){
@@ -107,7 +116,7 @@ function stats(list){
 
 /* ---- KPIs clickeables ---- */
 function renderKPIs(){
-  const s=stats(S.filas);
+  const s=stats(scope());
   const K=[
     {n:s.pct+"%", l:"Avance del período", c:"var(--menta)", go:()=>nav("graficos"), prog:s.pct},
     {n:s.rec, l:"Reconciliadas", c:"var(--menta)", go:()=>{ S.festado="Reconciliado"; nav("todo"); }},
@@ -192,8 +201,10 @@ function renderGrid(){
 
 /* ---------------- RESUMEN POR BOOKKEEPER (con empresas) ---------------- */
 function renderBookkeeper(){
+  const src=filtered();
   const byBk=new Map();
-  S.filas.forEach(f=>{ const bk=f.bookkeeper||f.bookkeeper_default||"(sin asignar)"; (byBk.get(bk)||byBk.set(bk,[]).get(bk)).push(f); });
+  src.forEach(f=>{ const bk=f.bookkeeper||f.bookkeeper_default||"(sin asignar)"; (byBk.get(bk)||byBk.set(bk,[]).get(bk)).push(f); });
+  if(!src.length){ $("#panel").innerHTML=`<div class="empty">Sin resultados para “${esc(S.q)}”.</div>`; return; }
   let html=`<div class="bk-panel">`;
   [...byBk.entries()].sort((a,b)=>b[1].length-a[1].length).forEach(([bk,rows],i)=>{
     const s=stats(rows); const col=BK_COLORS[i%BK_COLORS.length];
@@ -219,9 +230,11 @@ function renderBookkeeper(){
 
 /* ---------------- RESUMEN POR EMPRESA / CUENTA ---------------- */
 function renderEmpresa(){
+  const src=filtered();
   const groups=new Map();
-  S.filas.forEach(x=>{ if(!groups.has(x.cliente_id)) groups.set(x.cliente_id,[]); groups.get(x.cliente_id).push(x); });
+  src.forEach(x=>{ if(!groups.has(x.cliente_id)) groups.set(x.cliente_id,[]); groups.get(x.cliente_id).push(x); });
   const arr=[...groups.values()].sort((a,b)=>a[0].cliente.localeCompare(b[0].cliente));
+  if(!arr.length){ $("#panel").innerHTML=`<div class="empty">Sin resultados para “${esc(S.q)}”.</div>`; return; }
   let html=`<table class="emp-table"><thead><tr>
     <th>Empresa / Cuenta</th><th>Bookkeeper</th><th>Tipo</th><th>Estado</th>
     <th class="r">Avance</th></tr></thead><tbody>`;
@@ -262,20 +275,31 @@ function hbars(items, maxLabel=130){
     <div class="hbar-track"><div class="hbar-fill" style="width:${Math.round(i.value/max*100)}%;background:${i.color||'#2ee6a6'}"></div></div>
     <div class="hbar-val">${i.sfx?i.value+i.sfx:i.value}</div></div>`).join("");
 }
-function vbars(items, color="#2ee6a6", h=150){
-  const max=Math.max(1,...items.map(i=>i.value)); const bw=100/items.length;
-  let bars=""; items.forEach((it,idx)=>{ const bh=it.value/max*(h-24); const x=idx*bw+bw*0.15; const w=bw*0.7;
-    bars+=`<rect x="${x}%" y="${h-20-bh}" width="${w}%" height="${bh}" rx="3" fill="${color}"><title>${esc(it.label)}: ${it.value}</title></rect>`;
-    bars+=`<text x="${x+w/2}%" y="${h-20-bh-4}" text-anchor="middle" fill="#8ba0b3" font-size="10">${it.value||""}</text>`;
-    bars+=`<text x="${x+w/2}%" y="${h-6}" text-anchor="middle" fill="#6c8296" font-size="9">${esc(it.label)}</text>`; });
-  return `<svg viewBox="0 0 100 ${h}" width="100%" height="${h}" preserveAspectRatio="none" style="overflow:visible">${bars}</svg>`;
+// barras verticales en HTML (sin distorsión), altura en px
+function vbars(items, color="#2ee6a6", maxH=150){
+  if(!items.length) return '<p class="muted">Sin datos todavía.</p>';
+  const max=Math.max(1,...items.map(i=>i.value));
+  return `<div class="vbars">`+items.map(i=>`
+    <div class="vbar-col" title="${esc(i.label)}: ${i.value}">
+      <div class="vbar-num">${i.value||""}</div>
+      <div class="vbar" style="height:${Math.max(4,Math.round(i.value/max*maxH))}px;background:${color}"></div>
+      <div class="vbar-lbl">${esc(i.label)}</div>
+    </div>`).join("")+`</div>`;
 }
-function isoWeek(d){ const dt=new Date(d); const day=(dt.getUTCDay()+6)%7; dt.setUTCDate(dt.getUTCDate()-day+3);
-  const first=new Date(Date.UTC(dt.getUTCFullYear(),0,4)); const wk=1+Math.round(((dt-first)/86400000-3+((first.getUTCDay()+6)%7))/7);
-  return { key:dt.getUTCFullYear()+"-W"+String(wk).padStart(2,"0"), label:"S"+wk }; }
+// semana ISO -> etiqueta con la fecha del lunes (dd/mm)
+function isoWeek(d){
+  const dt=new Date(d+"T00:00:00"); const day=(dt.getDay()+6)%7;
+  const monday=new Date(dt); monday.setDate(dt.getDate()-day);
+  const th=new Date(monday); th.setDate(monday.getDate()+3);
+  const first=new Date(th.getFullYear(),0,4);
+  const wk=1+Math.round(((th-first)/86400000-3+((first.getDay()+6)%7))/7);
+  const key=th.getFullYear()+"-W"+String(wk).padStart(2,"0");
+  const label=String(monday.getDate()).padStart(2,"0")+"/"+String(monday.getMonth()+1).padStart(2,"0");
+  return { key, label };
+}
 
 function renderGraficos(){
-  const f=S.filas;
+  const f=scope();
   // 1) estados
   const estSeg=ESTADOS.map(e=>({label:e,value:f.filter(x=>x.estado===e).length,color:EST_COLOR[e]}));
   // 2) tipo
@@ -301,7 +325,8 @@ function renderGraficos(){
   const curP=S.periodos.find(p=>p.id===S.periodo_id);
   const perBars=[{label:curP?curP.etiqueta.slice(2):"actual",value:stats(f).pct,sfx:"%",color:"#2ee6a6"}];
 
-  $("#panel").innerHTML=`<div class="charts">
+  const banner = S.fbk ? `<div class="scope-banner">Mostrando datos de <b>${esc(S.fbk)}</b> · <a href="#" id="scope-clear">ver todos</a></div>` : "";
+  $("#panel").innerHTML=banner+`<div class="charts">
     <div class="chart-card"><h3>Estado de las cuentas</h3>
       <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">${donut(estSeg)}<div style="flex:1;min-width:150px">${legend(estSeg)}</div></div></div>
 
@@ -325,6 +350,7 @@ function renderGraficos(){
 
     <div class="chart-card wide"><h3>Top 10 clientes por # de cuentas</h3>${hbars(topCli)}</div>
   </div>`;
+  const sc=$("#scope-clear"); if(sc) sc.addEventListener("click",(e)=>{ e.preventDefault(); S.fbk=""; renderAll(); });
 }
 
 /* ---------------- EDICIÓN INLINE ---------------- */
@@ -354,7 +380,7 @@ async function onEdit(e){
 
 /* ---------------- FILTROS / TABS ---------------- */
 $("#tabs").addEventListener("click",(e)=>{ const t=e.target.closest(".tab"); if(!t)return; S.festado=""; nav(t.dataset.view); });
-$("#q").addEventListener("input",(e)=>{ S.q=e.target.value; if(["todo","pendientes","acceso","escalar","falta","nueva"].includes(S.view)) renderGrid(); });
+$("#q").addEventListener("input",(e)=>{ S.q=e.target.value; renderView(); });
 $("#f-bk").addEventListener("change",(e)=>{ S.fbk=e.target.value; renderAll(); });
 $("#f-tipo").addEventListener("change",(e)=>{ S.ftipo=e.target.value; renderAll(); });
 $("#sel-periodo").addEventListener("change", async (e)=>{ S.periodo_id=Number(e.target.value); await load(); });

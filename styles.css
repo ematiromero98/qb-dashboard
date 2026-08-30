@@ -139,6 +139,16 @@ td.saving{box-shadow:inset 0 0 0 2px var(--menta)}
 .hbar-val{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
 .big-stat{font-size:40px;font-weight:700;color:var(--menta);line-height:1}
 .big-sub{color:var(--muted);font-size:12px;margin-top:4px}
+/* barras verticales HTML (nítidas) */
+.vbars{display:flex;align-items:flex-end;gap:14px;padding-top:6px;min-height:120px}
+.vbar-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;max-width:90px}
+.vbar{width:100%;max-width:60px;border-radius:7px 7px 0 0;transition:height .3s}
+.vbar-num{font-size:13px;font-weight:600;color:var(--txt);margin-bottom:6px;font-variant-numeric:tabular-nums}
+.vbar-lbl{font-size:11px;color:var(--muted2);margin-top:8px;white-space:nowrap}
+/* banner de scope por persona */
+.scope-banner{background:var(--menta-soft);border:1px solid rgba(46,230,166,.35);color:var(--txt);border-radius:10px;padding:8px 14px;margin-bottom:12px;font-size:12.5px}
+.scope-banner a{color:var(--menta);text-decoration:none;font-weight:600}
+.scope-banner a:hover{text-decoration:underline}
 
 /* ---------- toast + modal ---------- */
 .empty{padding:40px;text-align:center;color:var(--muted)}
