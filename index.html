@@ -14,7 +14,7 @@
     <form id="gate-form" class="gate-card" autocomplete="off">
       <div class="gate-logo">QB<span>·</span>Dashboard</div>
       <p class="gate-sub">Control de conciliaciones · Chermisqui</p>
-      <input id="pin" type="password" inputmode="numeric" placeholder="PIN de acceso" autocomplete="off" />
+      <input id="pin" type="password" inputmode="text" placeholder="PIN de acceso" autocomplete="off" />
       <label class="gate-remember"><input type="checkbox" id="remember" /> Recordar en esta compu</label>
       <button type="submit" id="gate-btn">Entrar</button>
       <div id="gate-err" class="gate-err"></div>
@@ -26,15 +26,16 @@
     <header class="topbar">
       <div class="brand">QB<span>·</span>Dashboard <em id="periodo-label"></em></div>
       <div class="top-actions">
-        <select id="sel-periodo" title="Período"></select>
-        <button id="btn-nuevo-periodo" class="btn ghost" title="Crear un nuevo mes arrastrando las cuentas activas">+ Período</button>
+        <select id="sel-periodo" title="Período (cada mes queda guardado)"></select>
+        <button id="btn-nuevo-periodo" class="btn ghost" title="Cerrar el mes y abrir uno nuevo arrastrando las cuentas activas">+ Mes</button>
         <button id="btn-refresh" class="btn ghost" title="Refrescar ahora">↻</button>
         <button id="btn-export" class="btn ghost">Exportar CSV</button>
+        <button id="btn-pin" class="btn ghost" title="Cambiar PIN">PIN</button>
         <button id="btn-salir" class="btn ghost">Salir</button>
       </div>
     </header>
 
-    <!-- KPIs -->
+    <!-- KPIs (clickeables) -->
     <section id="kpis" class="kpis"></section>
 
     <!-- Barra de filtros / vistas -->
@@ -47,6 +48,8 @@
         <button class="tab" data-view="falta">Falta Doc</button>
         <button class="tab" data-view="nueva">Nueva Cuenta</button>
         <button class="tab" data-view="bookkeeper">Por Bookkeeper</button>
+        <button class="tab" data-view="empresa">Por Empresa / Cuenta</button>
+        <button class="tab" data-view="graficos">📊 Gráficos</button>
       </div>
       <div class="filters">
         <input id="q" type="search" placeholder="Buscar cliente o cuenta…" />
@@ -60,12 +63,13 @@
       </div>
     </section>
 
-    <!-- Grilla -->
-    <main class="grid-wrap">
+    <!-- Área scrolleable (grilla / resúmenes / gráficos) -->
+    <main class="content" id="content">
       <table id="grid" class="grid">
         <thead></thead>
         <tbody></tbody>
       </table>
+      <div id="panel" class="panel hidden"></div>
       <div id="empty" class="empty hidden">Sin filas para este filtro.</div>
     </main>
 

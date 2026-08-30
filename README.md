@@ -9,12 +9,19 @@ abren un link, ponen un PIN y cargan todo ahí, **todos sobre el mismo dato y en
 - Grilla editable agrupada por cliente (igual que el Excel): estado, fecha, bookkeeper,
   documentación, workflow de review (Junior/Auto/Claude/Senior/Memos) y análisis por área
   (Payroll / P&L / Balance / Ventas) + notas.
+- Checklist por cuenta simplificado: **Conciliado / Revisado / Memos / Notas**
+  (tildar *Conciliado* marca el estado como Reconciliado automáticamente).
+- **KPIs clickeables**: cada tarjeta lleva a su solapa.
 - **Dashboard de KPIs** automático: % de avance, reconciliadas, pendientes, por bookkeeper.
 - **Vistas** que reemplazan las hojas del Excel (Pendientes, Pend. de Acceso, Escalar,
-  Falta Doc, Nueva Cuenta, Por Bookkeeper) — se calculan solas.
-- **Períodos**: un mes nuevo se crea con un botón arrastrando las cuentas activas
-  (ya no un Excel por mes; queda todo el histórico).
-- Alta de clientes y cuentas, filtros, buscador y export a CSV.
+  Falta Doc, Nueva Cuenta) — se calculan solas — más:
+  - **Por Bookkeeper**: tarjeta por persona con las **empresas** que tiene y su avance.
+  - **Por Empresa / Cuenta**: tabla con el detalle de cada cuenta y su estado.
+  - **📊 Gráficos**: donuts de estado y tipo, avance por bookkeeper, trabajo por semana,
+    clientes terminados, checklist completado, top clientes y avance por mes.
+- **Guardado mes a mes**: un mes nuevo se crea con un botón arrastrando las cuentas activas;
+  el mes anterior queda guardado tal cual (ya no un Excel por mes; queda todo el histórico).
+- Alta de clientes y cuentas, filtros, buscador, export a CSV y **cambio de PIN** desde la UI.
 - Refresco automático cada 15 s → multiusuario en vivo.
 
 ## Arquitectura

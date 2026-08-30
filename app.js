@@ -1,16 +1,19 @@
 "use strict";
 const CFG = window.QB_CONFIG;
 const ESTADOS = ["Reconciliado","Pendiente de Hacer","Pendiente de Acceso","Escalar","Falta Documentacion","Nueva Cuenta","Inactive"];
-const BOOLS = [
-  ["doc_payroll","Doc"],["junior_input","Jr"],["auto_review","Auto"],["claude_review","Claude"],
-  ["senior_review","Sr"],["memos_checks","Memos"],
-  ["analisis_payroll","A.Pay"],["analisis_pl","A.P&L"],["analisis_balance","A.Bal"],["analisis_ventas","A.Vta"],
-];
-const $ = (s,r=document)=>r.querySelector(s);
+const EST_COLOR = {
+  "Reconciliado":"#2ee6a6","Pendiente de Hacer":"#ffb23e","Pendiente de Acceso":"#5aa9ff",
+  "Escalar":"#ff6b6b","Falta Documentacion":"#ffd05a","Nueva Cuenta":"#b98bff","Inactive":"#6c8296",
+};
+// Checklist simplificado
+const BOOLS = [["conciliado","Conciliado"],["revisado","Revisado"],["memos_checks","Memos"]];
+const BK_COLORS = ["#2ee6a6","#5aa9ff","#b98bff","#ffb23e","#ff86c8","#46d5e6","#ff6b6b","#ffd05a"];
+
+const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
 
 const S = { pin:"", periodos:[], periodo_id:null, clientes:[], filas:[], view:"todo",
-            q:"", fbk:"", ftipo:"", bookkeepers:[], timer:null, lastSig:"" };
+            q:"", fbk:"", ftipo:"", festado:"", bookkeepers:[], timer:null, lastSig:"" };
 
 /* ---------------- API ---------------- */
 async function api(action, extra={}){
@@ -27,149 +30,146 @@ async function api(action, extra={}){
 /* ---------------- LOGIN ---------------- */
 $("#gate-form").addEventListener("submit", async (e)=>{
   e.preventDefault();
-  const pin = $("#pin").value.trim();
-  const btn = $("#gate-btn"); const err = $("#gate-err");
+  const pin=$("#pin").value.trim(); const btn=$("#gate-btn"); const err=$("#gate-err");
   err.textContent=""; btn.disabled=true; btn.textContent="Entrando…";
   try{
-    S.pin = pin;
-    await api("login");
-    if($("#remember").checked) localStorage.setItem("qb_pin", pin);
-    else sessionStorage.setItem("qb_pin", pin);
+    S.pin=pin; await api("login");
+    (($("#remember").checked)?localStorage:sessionStorage).setItem("qb_pin", pin);
     startApp();
-  }catch(ex){
-    S.pin=""; err.textContent = ex.message; btn.disabled=false; btn.textContent="Entrar";
-  }
+  }catch(ex){ S.pin=""; err.textContent=ex.message; btn.disabled=false; btn.textContent="Entrar"; }
 });
-
 function tryAutoLogin(){
-  const pin = localStorage.getItem("qb_pin") || sessionStorage.getItem("qb_pin");
+  const pin=localStorage.getItem("qb_pin")||sessionStorage.getItem("qb_pin");
   if(pin){ S.pin=pin; api("login").then(startApp).catch(()=>{ S.pin=""; localStorage.removeItem("qb_pin"); sessionStorage.removeItem("qb_pin"); }); }
 }
+async function startApp(){ $("#gate").classList.add("hidden"); $("#app").classList.remove("hidden"); await load(); scheduleRefresh(); }
+$("#btn-salir").addEventListener("click", ()=>{ localStorage.removeItem("qb_pin"); sessionStorage.removeItem("qb_pin"); clearTimeout(S.timer); location.reload(); });
 
-async function startApp(){
-  $("#gate").classList.add("hidden");
-  $("#app").classList.remove("hidden");
-  await load();
-  scheduleRefresh();
-}
-
-$("#btn-salir").addEventListener("click", ()=>{
-  localStorage.removeItem("qb_pin"); sessionStorage.removeItem("qb_pin");
-  clearTimeout(S.timer); location.reload();
-});
-
-/* ---------------- LOAD ---------------- */
+/* ---------------- LOAD / REFRESH ---------------- */
 async function load(){
-  const d = await api("bootstrap", { periodo_id:S.periodo_id });
-  S.periodos = d.periodos; S.periodo_id = d.periodo_id; S.clientes = d.clientes; S.filas = d.filas;
-  const set = new Set();
-  d.clientes.forEach(c=>c.bookkeeper_default && set.add(c.bookkeeper_default));
-  d.filas.forEach(f=>f.bookkeeper && set.add(f.bookkeeper));
-  S.bookkeepers = [...set].sort();
+  const d=await api("bootstrap",{ periodo_id:S.periodo_id });
+  S.periodos=d.periodos; S.periodo_id=d.periodo_id; S.clientes=d.clientes; S.filas=d.filas;
+  const set=new Set();
+  d.clientes.forEach(c=>c.bookkeeper_default&&set.add(c.bookkeeper_default));
+  d.filas.forEach(f=>f.bookkeeper&&set.add(f.bookkeeper));
+  S.bookkeepers=[...set].sort();
   renderAll();
 }
-
+function sig(){ return S.filas.map(f=>f.conc_id+":"+f.actualizado_at).join("|"); }
 function scheduleRefresh(){
   clearTimeout(S.timer);
-  S.timer = setTimeout(async ()=>{
+  S.timer=setTimeout(async ()=>{
     try{
-      const editing = document.activeElement && document.activeElement.closest && document.activeElement.closest(".grid");
-      const modalOpen = !$("#modal").classList.contains("hidden");
-      if(!editing && !modalOpen){
-        const d = await api("bootstrap", { periodo_id:S.periodo_id });
-        const sig = d.filas.map(f=>f.conc_id+":"+f.actualizado_at).join("|");
-        if(sig !== S.lastSig){ S.filas=d.filas; S.clientes=d.clientes; renderAll(); }
+      const editing=document.activeElement&&document.activeElement.closest&&document.activeElement.closest(".grid");
+      const modalOpen=!$("#modal").classList.contains("hidden");
+      if(!editing&&!modalOpen){
+        const d=await api("bootstrap",{ periodo_id:S.periodo_id });
+        S.filas=d.filas; S.clientes=d.clientes;
+        if(sig()!==S.lastSig) renderAll();
       }
     }catch(e){}
     scheduleRefresh();
   }, CFG.REFRESH_MS);
 }
 
-/* ---------------- RENDER ---------------- */
+/* ---------------- RENDER ROOT ---------------- */
 function renderAll(){
-  S.lastSig = S.filas.map(f=>f.conc_id+":"+f.actualizado_at).join("|");
+  S.lastSig=sig();
   renderPeriodos(); renderKPIs(); renderTabs();
-  if(S.view==="bookkeeper") renderBookkeeper(); else renderGrid();
+  const grid=$("#grid"), panel=$("#panel"), empty=$("#empty");
+  const isGrid = ["todo","pendientes","acceso","escalar","falta","nueva"].includes(S.view);
+  grid.classList.toggle("hidden", !isGrid);
+  panel.classList.toggle("hidden", isGrid);
+  empty.classList.add("hidden");
+  if(isGrid) renderGrid();
+  else if(S.view==="bookkeeper") renderBookkeeper();
+  else if(S.view==="empresa") renderEmpresa();
+  else if(S.view==="graficos") renderGraficos();
 }
 
 function renderPeriodos(){
-  const cur = S.periodos.find(p=>p.id===S.periodo_id);
+  const cur=S.periodos.find(p=>p.id===S.periodo_id);
   $("#periodo-label").textContent = cur ? "· "+cur.etiqueta : "";
-  const sel = $("#sel-periodo");
-  sel.innerHTML = S.periodos.map(p=>`<option value="${p.id}" ${p.id===S.periodo_id?"selected":""}>${p.etiqueta}</option>`).join("");
-  const fbk = $("#f-bk");
-  fbk.innerHTML = `<option value="">Todos los bookkeepers</option>`+S.bookkeepers.map(b=>`<option ${b===S.fbk?"selected":""}>${b}</option>`).join("");
+  $("#sel-periodo").innerHTML = S.periodos.map(p=>`<option value="${p.id}" ${p.id===S.periodo_id?"selected":""}>${p.etiqueta}${p.activo?"":" (cerrado)"}</option>`).join("");
+  $("#f-bk").innerHTML = `<option value="">Todos los bookkeepers</option>`+S.bookkeepers.map(b=>`<option ${b===S.fbk?"selected":""}>${b}</option>`).join("");
 }
 
-function activas(list){ return list.filter(f=>f.estado!=="Inactive"); }
+const activas = (l)=>l.filter(f=>f.estado!=="Inactive");
+function stats(list){
+  const act=activas(list);
+  const by=(e)=>list.filter(x=>x.estado===e).length;
+  const rec=by("Reconciliado");
+  return { total:list.length, act:act.length, rec, pend:by("Pendiente de Hacer"),
+    acc:by("Pendiente de Acceso"), esc:by("Escalar"),
+    pct: act.length?Math.round(rec/act.length*100):0,
+    clientes:new Set(list.map(x=>x.cliente_id)).size };
+}
+
+/* ---- KPIs clickeables ---- */
 function renderKPIs(){
-  const f=S.filas, act=activas(f);
-  const rec=f.filter(x=>x.estado==="Reconciliado").length;
-  const pend=f.filter(x=>x.estado==="Pendiente de Hacer").length;
-  const acc=f.filter(x=>x.estado==="Pendiente de Acceso").length;
-  const esc=f.filter(x=>x.estado==="Escalar").length;
-  const pct= act.length? Math.round(rec/act.length*100):0;
-  const clientes=new Set(f.map(x=>x.cliente_id)).size;
-  $("#kpis").innerHTML = `
-    <div class="kpi accent kpi-prog"><div class="n">${pct}%</div><div class="l">Avance del período</div>
-      <div class="prog-track"><div class="prog-fill" style="width:${pct}%"></div></div></div>
-    <div class="kpi"><div class="n" style="color:var(--menta)">${rec}</div><div class="l">Reconciliadas</div></div>
-    <div class="kpi"><div class="n" style="color:var(--amber)">${pend}</div><div class="l">Pend. de Hacer</div></div>
-    <div class="kpi"><div class="n" style="color:var(--blue)">${acc}</div><div class="l">Pend. de Acceso</div></div>
-    <div class="kpi"><div class="n" style="color:var(--red)">${esc}</div><div class="l">Escalar</div></div>
-    <div class="kpi"><div class="n">${act.length}</div><div class="l">Cuentas activas</div></div>
-    <div class="kpi"><div class="n">${clientes}</div><div class="l">Clientes</div></div>`;
+  const s=stats(S.filas);
+  const K=[
+    {n:s.pct+"%", l:"Avance del período", c:"var(--menta)", go:()=>nav("graficos"), prog:s.pct},
+    {n:s.rec, l:"Reconciliadas", c:"var(--menta)", go:()=>{ S.festado="Reconciliado"; nav("todo"); }},
+    {n:s.pend, l:"Pend. de Hacer", c:"var(--amber)", go:()=>nav("pendientes")},
+    {n:s.acc, l:"Pend. de Acceso", c:"var(--blue)", go:()=>nav("acceso")},
+    {n:s.esc, l:"Escalar", c:"var(--red)", go:()=>nav("escalar")},
+    {n:s.act, l:"Cuentas activas", c:"var(--txt)", go:()=>{ S.festado=""; nav("todo"); }},
+    {n:s.clientes, l:"Clientes", c:"var(--txt)", go:()=>nav("empresa")},
+  ];
+  const box=$("#kpis"); box.innerHTML="";
+  K.forEach((k,i)=>{
+    const el=document.createElement("div");
+    el.className="kpi"+(k.prog!==undefined?" kpi-prog":"");
+    el.innerHTML=`<div class="n" style="color:${k.c}">${k.n}</div><div class="l">${k.l}</div>`+
+      (k.prog!==undefined?`<div class="prog-track"><div class="prog-fill" style="width:${k.prog}%"></div></div>`:"");
+    el.addEventListener("click", k.go);
+    box.appendChild(el);
+  });
 }
+function nav(view){ S.view=view; renderAll(); $("#content").scrollTop=0; }
 
-const VIEWS={ pendientes:"Pendiente de Hacer", acceso:"Pendiente de Acceso", escalar:"Escalar",
-             falta:"Falta Documentacion", nueva:"Nueva Cuenta" };
+const VIEWS={ pendientes:"Pendiente de Hacer", acceso:"Pendiente de Acceso", escalar:"Escalar", falta:"Falta Documentacion", nueva:"Nueva Cuenta" };
 function renderTabs(){
   $$("#tabs .tab").forEach(t=>{
     const v=t.dataset.view; t.classList.toggle("active", v===S.view);
-    let cnt="";
-    if(VIEWS[v]) cnt=S.filas.filter(f=>f.estado===VIEWS[v]).length;
-    if(cnt!=="" ) t.querySelector(".cnt")?.remove(), t.insertAdjacentHTML("beforeend", cnt?` <span class="cnt">${cnt}</span>`:"");
+    t.querySelector(".cnt")?.remove();
+    if(VIEWS[v]){ const c=S.filas.filter(f=>f.estado===VIEWS[v]).length; if(c) t.insertAdjacentHTML("beforeend",` <span class="cnt">${c}</span>`); }
   });
 }
 
 function filtered(){
   let f=S.filas.slice();
   if(VIEWS[S.view]) f=f.filter(x=>x.estado===VIEWS[S.view]);
-  if(S.ftipo) f=f.filter(x=>x.tipo===S.ftipo);
-  if(S.fbk) f=f.filter(x=>x.bookkeeper===S.fbk || (!x.bookkeeper && x.bookkeeper_default===S.fbk));
+  if(S.festado)     f=f.filter(x=>x.estado===S.festado);
+  if(S.ftipo)       f=f.filter(x=>x.tipo===S.ftipo);
+  if(S.fbk)         f=f.filter(x=>x.bookkeeper===S.fbk || (!x.bookkeeper && x.bookkeeper_default===S.fbk));
   if(S.q){ const q=S.q.toLowerCase(); f=f.filter(x=>(x.cliente||"").toLowerCase().includes(q)||(x.cuenta||"").toLowerCase().includes(q)); }
   return f;
 }
 
+/* ---------------- GRILLA ---------------- */
 function estadoSelect(f){
   return `<select class="est" data-e="${f.estado}" data-id="${f.conc_id}" data-field="estado">`+
     ESTADOS.map(e=>`<option ${e===f.estado?"selected":""}>${e}</option>`).join("")+`</select>`;
 }
 function bkSelect(f){
-  const opts=[""].concat(S.bookkeepers);
-  const cur=f.bookkeeper||"";
-  if(cur && !S.bookkeepers.includes(cur)) opts.push(cur);
+  const opts=[""].concat(S.bookkeepers); const cur=f.bookkeeper||"";
+  if(cur&&!S.bookkeepers.includes(cur)) opts.push(cur);
   return `<select class="bk-sel" data-id="${f.conc_id}" data-field="bookkeeper">`+
     opts.map(b=>`<option value="${b}" ${b===cur?"selected":""}>${b||"—"}</option>`).join("")+`</select>`;
 }
-
 function renderGrid(){
-  $(".bk-panel")?.remove();
-  $("#grid").classList.remove("hidden");
   const head=`<tr>
     <th class="l">Cuenta</th><th>Tipo</th><th>Estado</th><th>Fecha</th><th class="l">Bookkeeper</th>
     ${BOOLS.map(b=>`<th>${b[1]}</th>`).join("")}<th class="l">Notas</th></tr>`;
   $("#grid thead").innerHTML=head;
-
   const f=filtered();
-  // agrupar por cliente
   const groups=new Map();
   f.forEach(x=>{ if(!groups.has(x.cliente_id)) groups.set(x.cliente_id,[]); groups.get(x.cliente_id).push(x); });
-  const ncols = 5 + BOOLS.length + 1;
-  let html="";
+  const ncols=5+BOOLS.length+1; let html="";
   for(const [cid,rows] of groups){
-    const c=rows[0];
-    const rec=rows.filter(r=>r.estado==="Reconciliado").length;
+    const c=rows[0]; const rec=rows.filter(r=>r.estado==="Reconciliado").length;
     html+=`<tr class="cli-row"><td class="l" colspan="${ncols}">
       <span class="cli-name">${esc(c.cliente)}</span>
       <span class="cli-badge">${esc(c.bookkeeper_default||"—")}</span>
@@ -190,144 +190,248 @@ function renderGrid(){
   $("#empty").classList.toggle("hidden", f.length>0);
 }
 
+/* ---------------- RESUMEN POR BOOKKEEPER (con empresas) ---------------- */
 function renderBookkeeper(){
-  $("#grid").classList.add("hidden");
-  $("#empty").classList.add("hidden");
-  $(".bk-panel")?.remove();
   const byBk=new Map();
-  S.filas.forEach(f=>{
-    const bk=f.bookkeeper||f.bookkeeper_default||"(sin asignar)";
-    if(!byBk.has(bk)) byBk.set(bk,[]); byBk.get(bk).push(f);
-  });
+  S.filas.forEach(f=>{ const bk=f.bookkeeper||f.bookkeeper_default||"(sin asignar)"; (byBk.get(bk)||byBk.set(bk,[]).get(bk)).push(f); });
   let html=`<div class="bk-panel">`;
-  [...byBk.entries()].sort((a,b)=>b[1].length-a[1].length).forEach(([bk,rows])=>{
-    const act=activas(rows).length;
-    const rec=rows.filter(r=>r.estado==="Reconciliado").length;
-    const pend=rows.filter(r=>r.estado==="Pendiente de Hacer").length;
-    const acc=rows.filter(r=>r.estado==="Pendiente de Acceso").length;
-    const pct=act?Math.round(rec/act*100):0;
-    const cli=new Set(rows.map(r=>r.cliente_id)).size;
-    html+=`<div class="bk-card"><h3>${esc(bk)}</h3>
-      <div class="prog-track"><div class="prog-fill" style="width:${pct}%"></div></div>
-      <div class="bk-stat" style="margin-top:8px"><span>Avance</span><b>${pct}%</b></div>
-      <div class="bk-stat"><span>Clientes</span><b>${cli}</b></div>
-      <div class="bk-stat"><span>Cuentas activas</span><b>${act}</b></div>
-      <div class="bk-stat"><span>Reconciliadas</span><b style="color:var(--menta)">${rec}</b></div>
-      <div class="bk-stat"><span>Pend. de Hacer</span><b style="color:var(--amber)">${pend}</b></div>
-      <div class="bk-stat"><span>Pend. de Acceso</span><b style="color:var(--blue)">${acc}</b></div>
+  [...byBk.entries()].sort((a,b)=>b[1].length-a[1].length).forEach(([bk,rows],i)=>{
+    const s=stats(rows); const col=BK_COLORS[i%BK_COLORS.length];
+    // empresas de este bookkeeper
+    const cliMap=new Map();
+    rows.forEach(r=>{ const k=r.cliente; const o=cliMap.get(k)||{tot:0,rec:0}; o.tot++; if(r.estado==="Reconciliado")o.rec++; cliMap.set(k,o); });
+    const clis=[...cliMap.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+    html+=`<div class="bk-card">
+      <h3><span>${esc(bk)}</span><span class="pct" style="color:${col}">${s.pct}%</span></h3>
+      <div class="prog-track"><div class="prog-fill" style="width:${s.pct}%;background:${col}"></div></div>
+      <div class="bk-stat" style="margin-top:8px"><span>Empresas</span><b>${cliMap.size}</b></div>
+      <div class="bk-stat"><span>Cuentas activas</span><b>${s.act}</b></div>
+      <div class="bk-stat"><span>Reconciliadas</span><b style="color:var(--menta)">${s.rec}</b></div>
+      <div class="bk-stat"><span>Pend. de Hacer</span><b style="color:var(--amber)">${s.pend}</b></div>
+      <div class="bk-stat"><span>Pend. de Acceso</span><b style="color:var(--blue)">${s.acc}</b></div>
+      <div class="bk-clientes">${clis.map(([nm,o])=>`
+        <div class="bk-cli ${o.rec===o.tot?'done':''}"><span class="nm">${esc(nm)}</span><span class="st">${o.rec}/${o.tot}</span></div>`).join("")}</div>
     </div>`;
   });
   html+=`</div>`;
-  $(".grid-wrap").insertAdjacentHTML("beforeend", html);
+  $("#panel").innerHTML=html;
+}
+
+/* ---------------- RESUMEN POR EMPRESA / CUENTA ---------------- */
+function renderEmpresa(){
+  const groups=new Map();
+  S.filas.forEach(x=>{ if(!groups.has(x.cliente_id)) groups.set(x.cliente_id,[]); groups.get(x.cliente_id).push(x); });
+  const arr=[...groups.values()].sort((a,b)=>a[0].cliente.localeCompare(b[0].cliente));
+  let html=`<table class="emp-table"><thead><tr>
+    <th>Empresa / Cuenta</th><th>Bookkeeper</th><th>Tipo</th><th>Estado</th>
+    <th class="r">Avance</th></tr></thead><tbody>`;
+  for(const rows of arr){
+    const c=rows[0]; const s=stats(rows);
+    html+=`<tr class="emp-cli"><td>${esc(c.cliente)} <span class="muted" style="font-weight:400">· ${rows.length} cuentas</span></td>
+      <td>${esc(c.bookkeeper_default||"—")}</td><td></td><td></td>
+      <td class="r"><span class="mini-prog"><i style="width:${s.pct}%"></i></span>${s.pct}%</td></tr>`;
+    rows.sort((a,b)=>a.cuenta.localeCompare(b.cuenta)).forEach(r=>{
+      html+=`<tr class="emp-acc"><td><span class="cuenta">${esc(r.cuenta)}</span></td>
+        <td>${esc(r.bookkeeper||"—")}</td>
+        <td>${r.tipo==="Credit Card"?"CC":"Bank"}</td>
+        <td><span class="dot" style="background:${EST_COLOR[r.estado]||'#888'}"></span>${esc(r.estado)}</td>
+        <td class="r">${r.conciliado?"✓":""}</td></tr>`;
+    });
+  }
+  html+=`</tbody></table>`;
+  $("#panel").innerHTML=html;
+}
+
+/* ---------------- DASHBOARD DE GRÁFICOS ---------------- */
+function donut(segs, size=150){
+  const tot=segs.reduce((a,s)=>a+s.value,0)||1; const r=size/2, ir=r*0.62; let a0=-Math.PI/2; let paths="";
+  segs.forEach(s=>{ if(s.value<=0)return; const a1=a0+s.value/tot*Math.PI*2;
+    const x0=r+r*Math.cos(a0), y0=r+r*Math.sin(a0), x1=r+r*Math.cos(a1), y1=r+r*Math.sin(a1);
+    const xi1=r+ir*Math.cos(a1), yi1=r+ir*Math.sin(a1), xi0=r+ir*Math.cos(a0), yi0=r+ir*Math.sin(a0);
+    const large=(a1-a0)>Math.PI?1:0;
+    paths+=`<path d="M${x0} ${y0} A${r} ${r} 0 ${large} 1 ${x1} ${y1} L${xi1} ${yi1} A${ir} ${ir} 0 ${large} 0 ${xi0} ${yi0} Z" fill="${s.color}"/>`;
+    a0=a1; });
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">${paths}
+    <text x="${r}" y="${r-2}" text-anchor="middle" fill="#e6eef5" font-size="22" font-weight="700">${tot}</text>
+    <text x="${r}" y="${r+16}" text-anchor="middle" fill="#8ba0b3" font-size="10">total</text></svg>`;
+}
+function legend(segs){ return `<div class="legend">`+segs.filter(s=>s.value>0).map(s=>`<span><i style="background:${s.color}"></i>${esc(s.label)} · ${s.value}</span>`).join("")+`</div>`; }
+function hbars(items, maxLabel=130){
+  const max=Math.max(1,...items.map(i=>i.value));
+  return items.map(i=>`<div class="hbar-row"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(i.label)}">${esc(i.label)}</div>
+    <div class="hbar-track"><div class="hbar-fill" style="width:${Math.round(i.value/max*100)}%;background:${i.color||'#2ee6a6'}"></div></div>
+    <div class="hbar-val">${i.sfx?i.value+i.sfx:i.value}</div></div>`).join("");
+}
+function vbars(items, color="#2ee6a6", h=150){
+  const max=Math.max(1,...items.map(i=>i.value)); const bw=100/items.length;
+  let bars=""; items.forEach((it,idx)=>{ const bh=it.value/max*(h-24); const x=idx*bw+bw*0.15; const w=bw*0.7;
+    bars+=`<rect x="${x}%" y="${h-20-bh}" width="${w}%" height="${bh}" rx="3" fill="${color}"><title>${esc(it.label)}: ${it.value}</title></rect>`;
+    bars+=`<text x="${x+w/2}%" y="${h-20-bh-4}" text-anchor="middle" fill="#8ba0b3" font-size="10">${it.value||""}</text>`;
+    bars+=`<text x="${x+w/2}%" y="${h-6}" text-anchor="middle" fill="#6c8296" font-size="9">${esc(it.label)}</text>`; });
+  return `<svg viewBox="0 0 100 ${h}" width="100%" height="${h}" preserveAspectRatio="none" style="overflow:visible">${bars}</svg>`;
+}
+function isoWeek(d){ const dt=new Date(d); const day=(dt.getUTCDay()+6)%7; dt.setUTCDate(dt.getUTCDate()-day+3);
+  const first=new Date(Date.UTC(dt.getUTCFullYear(),0,4)); const wk=1+Math.round(((dt-first)/86400000-3+((first.getUTCDay()+6)%7))/7);
+  return { key:dt.getUTCFullYear()+"-W"+String(wk).padStart(2,"0"), label:"S"+wk }; }
+
+function renderGraficos(){
+  const f=S.filas;
+  // 1) estados
+  const estSeg=ESTADOS.map(e=>({label:e,value:f.filter(x=>x.estado===e).length,color:EST_COLOR[e]}));
+  // 2) tipo
+  const tipoSeg=[{label:"Bank",value:f.filter(x=>x.tipo==="Bank").length,color:"#5aa9ff"},
+                 {label:"Credit Card",value:f.filter(x=>x.tipo==="Credit Card").length,color:"#b98bff"}];
+  // 3) avance por bookkeeper
+  const byBk=new Map(); f.forEach(x=>{ const b=x.bookkeeper||x.bookkeeper_default||"(s/a)"; (byBk.get(b)||byBk.set(b,[]).get(b)).push(x); });
+  const bkBars=[...byBk.entries()].map(([b,rows],i)=>({label:b,value:stats(rows).pct,sfx:"%",color:BK_COLORS[i%BK_COLORS.length]})).sort((a,b)=>b.value-a.value);
+  // 4) trabajo por semana (fecha_completado)
+  const wk=new Map(); f.forEach(x=>{ if(x.fecha_completado&&x.estado==="Reconciliado"){ const w=isoWeek(x.fecha_completado); const o=wk.get(w.key)||{label:w.label,value:0}; o.value++; wk.set(w.key,o);} });
+  const wkArr=[...wk.entries()].sort((a,b)=>a[0].localeCompare(b[0])).slice(-10).map(e=>e[1]);
+  // 5) clientes terminados
+  const cliMap=new Map(); f.forEach(x=>{ const o=cliMap.get(x.cliente_id)||{tot:0,rec:0,inact:0}; o.tot++; if(x.estado==="Reconciliado")o.rec++; if(x.estado==="Inactive")o.inact++; cliMap.set(x.cliente_id,o); });
+  let cliDone=0,cliParcial=0,cliCero=0;
+  cliMap.forEach(o=>{ const activ=o.tot-o.inact; if(activ>0&&o.rec>=activ)cliDone++; else if(o.rec>0)cliParcial++; else cliCero++; });
+  const cliSeg=[{label:"Terminados",value:cliDone,color:"#2ee6a6"},{label:"En curso",value:cliParcial,color:"#ffb23e"},{label:"Sin arrancar",value:cliCero,color:"#ff6b6b"}];
+  // 6) top clientes por # cuentas
+  const cntMap=new Map(); f.forEach(x=>cntMap.set(x.cliente,(cntMap.get(x.cliente)||0)+1));
+  const topCli=[...cntMap.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10).map(([l,v])=>({label:l,value:v,color:"#46d5e6"}));
+  // 7) checklist (conciliado/revisado/memos)
+  const chk=BOOLS.map((b,i)=>({label:b[1],value:f.filter(x=>x[b[0]]).length,color:BK_COLORS[i]}));
+  // 8) avance por período (histórico) — usa el actual; si hubiera más, se agregan
+  const curP=S.periodos.find(p=>p.id===S.periodo_id);
+  const perBars=[{label:curP?curP.etiqueta.slice(2):"actual",value:stats(f).pct,sfx:"%",color:"#2ee6a6"}];
+
+  $("#panel").innerHTML=`<div class="charts">
+    <div class="chart-card"><h3>Estado de las cuentas</h3>
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">${donut(estSeg)}<div style="flex:1;min-width:150px">${legend(estSeg)}</div></div></div>
+
+    <div class="chart-card"><h3>Cuentas por tipo</h3>
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">${donut(tipoSeg)}<div style="flex:1;min-width:120px">${legend(tipoSeg)}</div></div></div>
+
+    <div class="chart-card"><h3>Clientes terminados</h3>
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+        <div><div class="big-stat">${cliDone}</div><div class="big-sub">de ${cliMap.size} clientes</div></div>
+        <div style="flex:1;min-width:140px">${legend(cliSeg)}</div></div></div>
+
+    <div class="chart-card wide"><h3>Avance por bookkeeper</h3>${hbars(bkBars)}</div>
+
+    <div class="chart-card wide"><h3>Trabajo por semana (cuentas reconciliadas)</h3>
+      ${wkArr.length?vbars(wkArr):'<p class="muted">Sin fechas de conciliación cargadas todavía.</p>'}</div>
+
+    <div class="chart-card"><h3>Checklist completado</h3>${hbars(chk.map(c=>({...c})))}</div>
+
+    <div class="chart-card"><h3>Avance por mes</h3>${vbars(perBars.map(p=>({label:p.label,value:p.value})),"#2ee6a6",130)}
+      <p class="muted" style="margin-top:6px">Cada mes nuevo suma una barra acá.</p></div>
+
+    <div class="chart-card wide"><h3>Top 10 clientes por # de cuentas</h3>${hbars(topCli)}</div>
+  </div>`;
 }
 
 /* ---------------- EDICIÓN INLINE ---------------- */
 $("#grid").addEventListener("change", onEdit);
-$("#grid").addEventListener("keydown", (e)=>{ if(e.key==="Enter" && e.target.classList.contains("notas")) e.target.blur(); });
+$("#grid").addEventListener("keydown",(e)=>{ if(e.key==="Enter"&&e.target.classList.contains("notas")) e.target.blur(); });
 async function onEdit(e){
-  const el=e.target; const id=el.dataset.id; const field=el.dataset.field;
-  if(!id||!field) return;
-  let val;
-  if(el.type==="checkbox") val=el.checked;
-  else if(field==="fecha_completado") val=el.value||null;
-  else val=el.value;
+  const el=e.target, id=el.dataset.id, field=el.dataset.field; if(!id||!field) return;
+  let val = el.type==="checkbox" ? el.checked : (field==="fecha_completado" ? (el.value||null) : el.value);
   const td=el.closest("td"); td?.classList.add("saving");
   try{
     await api("update_conc",{ id:Number(id), patch:{ [field]:val } });
     const fila=S.filas.find(f=>f.conc_id==id);
-    if(fila){ fila[field]=val; fila.actualizado_at=new Date().toISOString(); }
-    if(field==="estado"){ el.dataset.e=val; renderKPIs(); renderTabs();
-      // si cambió estado y hay vista filtrada por estado, re-render
-      if(VIEWS[S.view]) renderGrid();
+    if(fila){ fila[field]=val; fila.actualizado_at=new Date().toISOString();
+      // conciliar auto-marca estado Reconciliado si tildan Conciliado
+      if(field==="conciliado"&&val===true&&fila.estado!=="Reconciliado"){
+        fila.estado="Reconciliado"; await api("update_conc",{id:Number(id),patch:{estado:"Reconciliado"}});
+        const selEl=$(`select.est[data-id="${id}"]`); if(selEl){ selEl.value="Reconciliado"; selEl.dataset.e="Reconciliado"; }
+      }
     }
+    if(field==="estado"){ el.dataset.e=val; }
+    renderKPIs(); renderTabs();
+    if(field==="estado"&&VIEWS[S.view]) renderGrid();
     toast("Guardado ✓");
   }catch(ex){ toast(ex.message,true); }
-  finally{ td?.classList.remove("saving"); S.lastSig=S.filas.map(f=>f.conc_id+":"+f.actualizado_at).join("|"); }
+  finally{ td?.classList.remove("saving"); S.lastSig=sig(); }
 }
 
 /* ---------------- FILTROS / TABS ---------------- */
-$("#tabs").addEventListener("click",(e)=>{ const t=e.target.closest(".tab"); if(!t)return; S.view=t.dataset.view; renderAll(); });
-$("#q").addEventListener("input",(e)=>{ S.q=e.target.value; if(S.view!=="bookkeeper") renderGrid(); });
-$("#f-bk").addEventListener("change",(e)=>{ S.fbk=e.target.value; if(S.view!=="bookkeeper") renderGrid(); });
-$("#f-tipo").addEventListener("change",(e)=>{ S.ftipo=e.target.value; if(S.view!=="bookkeeper") renderGrid(); });
+$("#tabs").addEventListener("click",(e)=>{ const t=e.target.closest(".tab"); if(!t)return; S.festado=""; nav(t.dataset.view); });
+$("#q").addEventListener("input",(e)=>{ S.q=e.target.value; if(["todo","pendientes","acceso","escalar","falta","nueva"].includes(S.view)) renderGrid(); });
+$("#f-bk").addEventListener("change",(e)=>{ S.fbk=e.target.value; renderAll(); });
+$("#f-tipo").addEventListener("change",(e)=>{ S.ftipo=e.target.value; renderAll(); });
 $("#sel-periodo").addEventListener("change", async (e)=>{ S.periodo_id=Number(e.target.value); await load(); });
 $("#btn-refresh").addEventListener("click", async ()=>{ await load(); toast("Actualizado ✓"); });
 
 /* ---------------- MODALES ---------------- */
-function openModal(title, bodyHTML){ $("#modal-title").textContent=title; $("#modal-body").innerHTML=bodyHTML; $("#modal").classList.remove("hidden"); }
+function openModal(t,b){ $("#modal-title").textContent=t; $("#modal-body").innerHTML=b; $("#modal").classList.remove("hidden"); }
 function closeModal(){ $("#modal").classList.add("hidden"); }
 $("#modal-x").addEventListener("click", closeModal);
 $("#modal").addEventListener("click",(e)=>{ if(e.target.id==="modal") closeModal(); });
 
 $("#btn-add-cuenta").addEventListener("click", ()=>{
-  const cliOpts = S.clientes.map(c=>`<option value="${c.id}">${esc(c.nombre)}</option>`).join("");
-  const bkOpts = [""].concat(S.bookkeepers).map(b=>`<option value="${b}">${b||"—"}</option>`).join("");
-  openModal("Agregar cliente / cuenta", `
+  const cliOpts=S.clientes.map(c=>`<option value="${c.id}">${esc(c.nombre)}</option>`).join("");
+  const bkOpts=[""].concat(S.bookkeepers).map(b=>`<option value="${b}">${b||"—"}</option>`).join("");
+  openModal("Agregar cliente / cuenta",`
     <label>Cliente existente</label>
     <select id="m-cli"><option value="">— nuevo cliente —</option>${cliOpts}</select>
-    <div id="m-newcli">
-      <label>Nombre del cliente nuevo</label>
-      <input id="m-clinombre" placeholder="Razón social">
-      <label>Bookkeeper asignado</label>
-      <select id="m-clibk">${bkOpts}</select>
-    </div>
+    <div id="m-newcli"><label>Nombre del cliente nuevo</label><input id="m-clinombre" placeholder="Razón social">
+      <label>Bookkeeper asignado</label><select id="m-clibk">${bkOpts}</select></div>
     <hr style="border-color:var(--line);margin:16px 0">
-    <div class="row2">
-      <div><label>Nombre de la cuenta</label><input id="m-cuenta" placeholder="Ej: Chase 1234"></div>
-      <div><label>Tipo</label><select id="m-tipo"><option>Bank</option><option>Credit Card</option></select></div>
-    </div>
-    <div class="modal-actions"><button class="btn ghost" id="m-cancel">Cancelar</button><button class="btn primary" id="m-save">Guardar</button></div>
-  `);
-  const toggle=()=>{ $("#m-newcli").style.display = $("#m-cli").value ? "none":"block"; };
-  $("#m-cli").addEventListener("change", toggle); toggle();
-  $("#m-cancel").addEventListener("click", closeModal);
-  $("#m-save").addEventListener("click", saveCuenta);
+    <div class="row2"><div><label>Nombre de la cuenta</label><input id="m-cuenta" placeholder="Ej: Chase 1234"></div>
+      <div><label>Tipo</label><select id="m-tipo"><option>Bank</option><option>Credit Card</option></select></div></div>
+    <div class="modal-actions"><button class="btn ghost" id="m-cancel">Cancelar</button><button class="btn primary" id="m-save">Guardar</button></div>`);
+  const toggle=()=>{ $("#m-newcli").style.display=$("#m-cli").value?"none":"block"; };
+  $("#m-cli").addEventListener("change",toggle); toggle();
+  $("#m-cancel").addEventListener("click",closeModal);
+  $("#m-save").addEventListener("click",saveCuenta);
 });
-
 async function saveCuenta(){
-  const cuenta=$("#m-cuenta").value.trim();
-  if(!cuenta) return toast("Falta el nombre de la cuenta", true);
+  const cuenta=$("#m-cuenta").value.trim(); if(!cuenta) return toast("Falta el nombre de la cuenta",true);
   try{
     let cliente_id=$("#m-cli").value;
-    if(!cliente_id){
-      const nombre=$("#m-clinombre").value.trim();
-      if(!nombre) return toast("Falta el nombre del cliente", true);
-      const r=await api("add_cliente",{ nombre, bookkeeper_default:$("#m-clibk").value||null });
-      cliente_id=r.cliente.id;
-    }
+    if(!cliente_id){ const nombre=$("#m-clinombre").value.trim(); if(!nombre) return toast("Falta el nombre del cliente",true);
+      const r=await api("add_cliente",{ nombre, bookkeeper_default:$("#m-clibk").value||null }); cliente_id=r.cliente.id; }
     await api("add_cuenta",{ cliente_id:Number(cliente_id), nombre:cuenta, tipo:$("#m-tipo").value, periodo_id:S.periodo_id });
     closeModal(); await load(); toast("Cuenta agregada ✓");
   }catch(ex){ toast(ex.message,true); }
 }
 
 $("#btn-nuevo-periodo").addEventListener("click", ()=>{
-  const now=new Date(); const y=now.getFullYear(); const m=String(now.getMonth()+1).padStart(2,"0");
-  openModal("Nuevo período", `
-    <p class="muted">Crea un mes nuevo arrastrando todas las cuentas activas en estado <b>Pendiente de Hacer</b>.</p>
-    <div class="row2">
-      <div><label>Etiqueta</label><input id="m-etq" value="${y}-${m}"></div>
-      <div><label>Fecha (1° del mes)</label><input type="date" id="m-fec" value="${y}-${m}-01"></div>
-    </div>
-    <div class="modal-actions"><button class="btn ghost" id="m-cancel">Cancelar</button><button class="btn primary" id="m-save">Crear período</button></div>
-  `);
-  $("#m-cancel").addEventListener("click", closeModal);
+  const now=new Date(), y=now.getFullYear(), m=String(now.getMonth()+1).padStart(2,"0");
+  openModal("Nuevo mes",`
+    <p class="muted">El mes actual queda <b>guardado</b> tal cual está, y se abre uno nuevo arrastrando todas las cuentas activas en <b>Pendiente de Hacer</b>.</p>
+    <div class="row2"><div><label>Etiqueta</label><input id="m-etq" value="${y}-${m}"></div>
+      <div><label>Fecha (1° del mes)</label><input type="date" id="m-fec" value="${y}-${m}-01"></div></div>
+    <div class="modal-actions"><button class="btn ghost" id="m-cancel">Cancelar</button><button class="btn primary" id="m-save">Crear mes</button></div>`);
+  $("#m-cancel").addEventListener("click",closeModal);
   $("#m-save").addEventListener("click", async ()=>{
-    try{
-      const r=await api("new_periodo",{ etiqueta:$("#m-etq").value.trim(), fecha:$("#m-fec").value });
-      S.periodo_id=r.periodo.id; closeModal(); await load(); toast("Período creado ✓");
-    }catch(ex){ toast(ex.message,true); }
+    try{ const r=await api("new_periodo",{ etiqueta:$("#m-etq").value.trim(), fecha:$("#m-fec").value });
+      S.periodo_id=r.periodo.id; closeModal(); await load(); toast("Mes creado ✓"); }
+    catch(ex){ toast(ex.message,true); }
+  });
+});
+
+$("#btn-pin").addEventListener("click", ()=>{
+  openModal("Cambiar PIN",`
+    <label>Nuevo PIN (mín. 4 caracteres)</label><input id="m-pin" type="text" placeholder="nuevo PIN">
+    <p class="muted" style="margin-top:8px">Se aplica a todos. Avisales el nuevo PIN a los chicos.</p>
+    <div class="modal-actions"><button class="btn ghost" id="m-cancel">Cancelar</button><button class="btn primary" id="m-save">Cambiar</button></div>`);
+  $("#m-cancel").addEventListener("click",closeModal);
+  $("#m-save").addEventListener("click", async ()=>{
+    const np=$("#m-pin").value.trim(); if(np.length<4) return toast("PIN muy corto",true);
+    try{ await api("set_pin",{ new_pin:np }); S.pin=np;
+      (localStorage.getItem("qb_pin")?localStorage:sessionStorage).setItem("qb_pin",np);
+      closeModal(); toast("PIN cambiado ✓"); }
+    catch(ex){ toast(ex.message,true); }
   });
 });
 
 /* ---------------- EXPORT CSV ---------------- */
 $("#btn-export").addEventListener("click", ()=>{
-  const f=filtered();
+  const f=(["todo","pendientes","acceso","escalar","falta","nueva"].includes(S.view))?filtered():S.filas;
   const cols=["cliente","cuenta","tipo","estado","fecha_completado","bookkeeper",...BOOLS.map(b=>b[0]),"notas"];
   const head=["Cliente","Cuenta","Tipo","Estado","Fecha","Bookkeeper",...BOOLS.map(b=>b[1]),"Notas"];
   const csv=[head.join(",")].concat(f.map(r=>cols.map(c=>{
     let v=r[c]; if(typeof v==="boolean") v=v?"SI":""; v=v==null?"":String(v);
-    return `"${v.replace(/"/g,'""')}"`;
-  }).join(","))).join("\r\n");
+    return `"${v.replace(/"/g,'""')}"`; }).join(","))).join("\r\n");
   const cur=S.periodos.find(p=>p.id===S.periodo_id);
   const blob=new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8"});
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob);

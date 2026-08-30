@@ -14,9 +14,11 @@ const db = createClient(
 );
 
 const CONC_FIELDS = new Set([
-  'estado','fecha_completado','bookkeeper','doc_payroll','junior_input','auto_review',
-  'claude_review','senior_review','memos_checks','analisis_payroll','analisis_pl',
-  'analisis_balance','analisis_ventas','notas',
+  'estado','fecha_completado','bookkeeper',
+  'conciliado','revisado','memos_checks','notas',
+  // legacy (se mantienen para no perder datos históricos):
+  'doc_payroll','junior_input','auto_review','claude_review','senior_review',
+  'analisis_payroll','analisis_pl','analisis_balance','analisis_ventas',
 ]);
 const clean = (patch: Record<string, unknown>, allowed: Set<string>) => {
   const o: Record<string, unknown> = {};

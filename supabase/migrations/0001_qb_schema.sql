@@ -39,6 +39,8 @@ create table if not exists public.qb_conciliaciones (
   estado           text not null default 'Pendiente de Hacer',
   fecha_completado date,
   bookkeeper       text,
+  conciliado       boolean not null default false,
+  revisado         boolean not null default false,
   doc_payroll      boolean not null default false,
   junior_input     boolean not null default false,
   auto_review      boolean not null default false,
@@ -70,7 +72,7 @@ create table if not exists public.qb_config (
   updated_at timestamptz not null default now(),
   constraint qb_config_singleton check (id = 1)
 );
-insert into public.qb_config(id, pin) values (1, 'CHERMI-2026') on conflict (id) do nothing;
+insert into public.qb_config(id, pin) values (1, 'qb2026') on conflict (id) do nothing;
 
 -- Vista aplanada que consume la Edge Function
 create or replace view public.qb_vista as
@@ -78,8 +80,8 @@ select co.id as conc_id, co.periodo_id,
   cl.id as cliente_id, cl.nombre as cliente, cl.bookkeeper_default,
   cu.id as cuenta_id, cu.nombre as cuenta, cu.tipo, cu.activo as cuenta_activo, cu.orden,
   co.estado, co.fecha_completado, co.bookkeeper,
-  co.doc_payroll, co.junior_input, co.auto_review, co.claude_review,
-  co.senior_review, co.memos_checks,
+  co.conciliado, co.revisado, co.memos_checks,
+  co.doc_payroll, co.junior_input, co.auto_review, co.claude_review, co.senior_review,
   co.analisis_payroll, co.analisis_pl, co.analisis_balance, co.analisis_ventas,
   co.notas, co.actualizado_at
 from public.qb_conciliaciones co
