@@ -96,6 +96,12 @@ select:focus,input:focus{outline:none;border-color:var(--menta)}
 .est[data-e="Inactive"]{color:var(--muted2);border-color:var(--line2)}
 
 .grid input[type=checkbox]{width:18px;height:18px;accent-color:var(--menta);cursor:pointer}
+.grid input[type=checkbox].manual-ck{accent-color:var(--violet)}
+.man-tag{display:inline-grid;place-items:center;width:15px;height:15px;margin-left:6px;border-radius:4px;
+  font-size:10px;font-weight:700;color:var(--violet);background:rgba(185,139,255,.16);
+  border:1px solid rgba(185,139,255,.4);vertical-align:middle}
+.chk-line{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--muted);cursor:pointer}
+.chk-line input{width:17px;height:17px;accent-color:var(--violet)}
 .grid .bk-sel,.grid .fecha,.grid .notas{width:100%;min-width:90px}
 .grid .notas{min-width:170px}
 td.saving{box-shadow:inset 0 0 0 2px var(--menta)}

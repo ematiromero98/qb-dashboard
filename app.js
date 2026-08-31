@@ -55,7 +55,7 @@ async function load(){
   S.bookkeepers=[...set].sort();
   renderAll();
 }
-function sig(){ return S.filas.map(f=>f.conc_id+":"+f.actualizado_at).join("|"); }
+function sig(){ return S.filas.map(f=>f.conc_id+":"+f.actualizado_at+":"+(f.manual?1:0)).join("|"); }
 function scheduleRefresh(){
   clearTimeout(S.timer);
   S.timer=setTimeout(async ()=>{
@@ -110,6 +110,7 @@ function stats(list){
   const rec=by("Reconciliado");
   return { total:list.length, act:act.length, rec, pend:by("Pendiente de Hacer"),
     acc:by("Pendiente de Acceso"), esc:by("Escalar"),
+    manual:list.filter(x=>x.manual).length,
     pct: act.length?Math.round(rec/act.length*100):0,
     clientes:new Set(list.map(x=>x.cliente_id)).size };
 }
@@ -125,6 +126,7 @@ function renderKPIs(){
     {n:s.esc, l:"Escalar", c:"var(--red)", go:()=>nav("escalar")},
     {n:s.act, l:"Cuentas activas", c:"var(--txt)", go:()=>{ S.festado=""; nav("todo"); }},
     {n:s.clientes, l:"Clientes", c:"var(--txt)", go:()=>nav("empresa")},
+    {n:s.manual, l:"Cuentas manuales", c:"var(--violet)", go:()=>drillManuales()},
   ];
   const box=$("#kpis"); box.innerHTML="";
   K.forEach((k,i)=>{
@@ -170,13 +172,13 @@ function bkSelect(f){
 }
 function renderGrid(){
   const head=`<tr>
-    <th class="l">Cuenta</th><th>Tipo</th><th>Estado</th><th>Fecha</th><th class="l">Bookkeeper</th>
+    <th class="l">Cuenta</th><th>Tipo</th><th title="Cuenta manual (sin importar de QuickBooks)">Manual</th><th>Estado</th><th>Fecha</th><th class="l">Bookkeeper</th>
     ${BOOLS.map(b=>`<th>${b[1]}</th>`).join("")}<th class="l">Notas</th></tr>`;
   $("#grid thead").innerHTML=head;
   const f=filtered();
   const groups=new Map();
   f.forEach(x=>{ if(!groups.has(x.cliente_id)) groups.set(x.cliente_id,[]); groups.get(x.cliente_id).push(x); });
-  const ncols=5+BOOLS.length+1; let html="";
+  const ncols=6+BOOLS.length+1; let html="";
   for(const [cid,rows] of groups){
     const c=rows[0]; const rec=rows.filter(r=>r.estado==="Reconciliado").length;
     html+=`<tr class="cli-row"><td class="l" colspan="${ncols}">
@@ -185,8 +187,9 @@ function renderGrid(){
       <span class="cli-count">${rec}/${rows.length} reconciliadas</span></td></tr>`;
     for(const r of rows){
       html+=`<tr data-id="${r.conc_id}">
-        <td class="l cuenta">${esc(r.cuenta)}</td>
+        <td class="l cuenta">${esc(r.cuenta)}${r.manual?'<span class="man-tag" title="Cuenta manual">M</span>':''}</td>
         <td><span class="tipo-tag ${r.tipo==='Credit Card'?'cc':'bank'}">${r.tipo==='Credit Card'?'CC':'Bank'}</span></td>
+        <td><input type="checkbox" class="manual-ck" data-cuenta="${r.cuenta_id}" data-cfield="manual" ${r.manual?"checked":""} title="Marcar como manual"></td>
         <td>${estadoSelect(r)}</td>
         <td><input type="date" class="fecha" data-id="${r.conc_id}" data-field="fecha_completado" value="${r.fecha_completado||""}"></td>
         <td class="l">${bkSelect(r)}</td>
@@ -361,7 +364,9 @@ function renderGraficos(){
 $("#grid").addEventListener("change", onEdit);
 $("#grid").addEventListener("keydown",(e)=>{ if(e.key==="Enter"&&e.target.classList.contains("notas")) e.target.blur(); });
 async function onEdit(e){
-  const el=e.target, id=el.dataset.id, field=el.dataset.field; if(!id||!field) return;
+  const el=e.target;
+  if(el.dataset.cuenta && el.dataset.cfield) return onEditCuenta(el);
+  const id=el.dataset.id, field=el.dataset.field; if(!id||!field) return;
   let val = el.type==="checkbox" ? el.checked : (field==="fecha_completado" ? (el.value||null) : el.value);
   const td=el.closest("td"); td?.classList.add("saving");
   try{
@@ -377,6 +382,22 @@ async function onEdit(e){
     if(field==="estado"){ el.dataset.e=val; }
     renderKPIs(); renderTabs();
     if(field==="estado"&&VIEWS[S.view]) renderGrid();
+    toast("Guardado ✓");
+  }catch(ex){ toast(ex.message,true); }
+  finally{ td?.classList.remove("saving"); S.lastSig=sig(); }
+}
+// edición a nivel CUENTA (ej: marca MANUAL) → tabla qb_cuentas
+async function onEditCuenta(el){
+  const cid=el.dataset.cuenta, field=el.dataset.cfield;
+  const val = el.type==="checkbox" ? el.checked : el.value;
+  const td=el.closest("td"); td?.classList.add("saving");
+  try{
+    await api("update_cuenta",{ id:Number(cid), patch:{ [field]:val } });
+    S.filas.forEach(f=>{ if(f.cuenta_id==cid) f[field]=val; });
+    const tag=el.closest("tr")?.querySelector(".cuenta");
+    if(tag && field==="manual"){ tag.querySelector(".man-tag")?.remove();
+      if(val) tag.insertAdjacentHTML("beforeend",'<span class="man-tag" title="Cuenta manual">M</span>'); }
+    renderKPIs();
     toast("Guardado ✓");
   }catch(ex){ toast(ex.message,true); }
   finally{ td?.classList.remove("saving"); S.lastSig=sig(); }
@@ -420,6 +441,12 @@ function drillList(title, lines){
   openModal(`${title} · ${lines.length}`,
     `<div class="drill-list">${lines.length?lines.map(l=>`<div class="drill-item">${l}</div>`).join(""):'<p class="muted">Nada acá.</p>'}</div>`);
 }
+function drillManuales(){
+  const rows=scope().filter(x=>x.manual).sort((a,b)=>a.cliente.localeCompare(b.cliente)||a.cuenta.localeCompare(b.cuenta));
+  drillList("Cuentas manuales (sin importar de QuickBooks)",
+    rows.map(x=>`<span class="di-l"><b>${esc(x.cuenta)}</b> <span class="muted">${esc(x.cliente)}</span></span>`+
+      `<span class="di-r"><span class="dot" style="background:${EST_COLOR[x.estado]||'#888'}"></span>${esc(x.estado)}</span>`));
+}
 
 /* ---------------- MODALES ---------------- */
 function openModal(t,b){ $("#modal-title").textContent=t; $("#modal-body").innerHTML=b; $("#modal").classList.remove("hidden"); }
@@ -438,6 +465,7 @@ $("#btn-add-cuenta").addEventListener("click", ()=>{
     <hr style="border-color:var(--line);margin:16px 0">
     <div class="row2"><div><label>Nombre de la cuenta</label><input id="m-cuenta" placeholder="Ej: Chase 1234"></div>
       <div><label>Tipo</label><select id="m-tipo"><option>Bank</option><option>Credit Card</option></select></div></div>
+    <label class="chk-line"><input type="checkbox" id="m-manual"> Cuenta <b>manual</b> (se concilia a mano, sin importar de QuickBooks)</label>
     <div class="modal-actions"><button class="btn ghost" id="m-cancel">Cancelar</button><button class="btn primary" id="m-save">Guardar</button></div>`);
   const toggle=()=>{ $("#m-newcli").style.display=$("#m-cli").value?"none":"block"; };
   $("#m-cli").addEventListener("change",toggle); toggle();
@@ -450,7 +478,7 @@ async function saveCuenta(){
     let cliente_id=$("#m-cli").value;
     if(!cliente_id){ const nombre=$("#m-clinombre").value.trim(); if(!nombre) return toast("Falta el nombre del cliente",true);
       const r=await api("add_cliente",{ nombre, bookkeeper_default:$("#m-clibk").value||null }); cliente_id=r.cliente.id; }
-    await api("add_cuenta",{ cliente_id:Number(cliente_id), nombre:cuenta, tipo:$("#m-tipo").value, periodo_id:S.periodo_id });
+    await api("add_cuenta",{ cliente_id:Number(cliente_id), nombre:cuenta, tipo:$("#m-tipo").value, manual:$("#m-manual").checked, periodo_id:S.periodo_id });
     closeModal(); await load(); toast("Cuenta agregada ✓");
   }catch(ex){ toast(ex.message,true); }
 }
@@ -488,8 +516,8 @@ $("#btn-pin").addEventListener("click", ()=>{
 /* ---------------- EXPORT CSV ---------------- */
 $("#btn-export").addEventListener("click", ()=>{
   const f=(["todo","pendientes","acceso","escalar","falta","nueva"].includes(S.view))?filtered():S.filas;
-  const cols=["cliente","cuenta","tipo","estado","fecha_completado","bookkeeper",...BOOLS.map(b=>b[0]),"notas"];
-  const head=["Cliente","Cuenta","Tipo","Estado","Fecha","Bookkeeper",...BOOLS.map(b=>b[1]),"Notas"];
+  const cols=["cliente","cuenta","tipo","manual","estado","fecha_completado","bookkeeper",...BOOLS.map(b=>b[0]),"notas"];
+  const head=["Cliente","Cuenta","Tipo","Manual","Estado","Fecha","Bookkeeper",...BOOLS.map(b=>b[1]),"Notas"];
   const csv=[head.join(",")].concat(f.map(r=>cols.map(c=>{
     let v=r[c]; if(typeof v==="boolean") v=v?"SI":""; v=v==null?"":String(v);
     return `"${v.replace(/"/g,'""')}"`; }).join(","))).join("\r\n");
