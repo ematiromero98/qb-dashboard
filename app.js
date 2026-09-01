@@ -181,9 +181,12 @@ function renderGrid(){
   const ncols=6+BOOLS.length+1; let html="";
   for(const [cid,rows] of groups){
     const c=rows[0]; const rec=rows.filter(r=>r.estado==="Reconciliado").length;
+    const cliRow=S.clientes.find(x=>x.id===cid)||{};
+    const comTip=(cliRow.comentarios||"").trim();
     html+=`<tr class="cli-row"><td class="l" colspan="${ncols}">
       <span class="cli-name">${esc(c.cliente)}</span>
       <span class="cli-badge">${esc(c.bookkeeper_default||"—")}</span>
+      ${comTip?`<span class="cli-com-ic" title="${esc(comTip)}">💬</span>`:""}
       <span class="cli-count">${rec}/${rows.length} reconciliadas</span></td></tr>`;
     for(const r of rows){
       html+=`<tr data-id="${r.conc_id}">
@@ -243,9 +246,13 @@ function renderEmpresa(){
     <th class="r">Avance</th></tr></thead><tbody>`;
   for(const rows of arr){
     const c=rows[0]; const s=stats(rows);
+    const cli=S.clientes.find(x=>x.id===c.cliente_id)||{};
+    const com=cli.comentarios||"";
     html+=`<tr class="emp-cli"><td>${esc(c.cliente)} <span class="muted" style="font-weight:400">· ${rows.length} cuentas</span></td>
       <td>${esc(c.bookkeeper_default||"—")}</td><td></td><td></td>
       <td class="r"><span class="mini-prog"><i style="width:${s.pct}%"></i></span>${s.pct}%</td></tr>`;
+    html+=`<tr class="emp-com"><td colspan="5"><span class="com-ic">💬</span>
+      <input class="cli-com" data-cid="${c.cliente_id}" value="${esc(com)}" placeholder="Comentario del cliente (se mantiene mes a mes, visible para el equipo)…"></td></tr>`;
     rows.sort((a,b)=>a.cuenta.localeCompare(b.cuenta)).forEach(r=>{
       html+=`<tr class="emp-acc"><td><span class="cuenta">${esc(r.cuenta)}</span></td>
         <td>${esc(r.bookkeeper||"—")}</td>
@@ -410,6 +417,19 @@ $("#f-bk").addEventListener("change",(e)=>{ S.fbk=e.target.value; renderAll(); }
 $("#f-tipo").addEventListener("change",(e)=>{ S.ftipo=e.target.value; renderAll(); });
 $("#sel-periodo").addEventListener("change", async (e)=>{ S.periodo_id=Number(e.target.value); await load(); });
 $("#btn-refresh").addEventListener("click", async ()=>{ await load(); toast("Actualizado ✓"); });
+
+/* ---------------- COMENTARIOS por cliente ---------------- */
+$("#panel").addEventListener("change", async (e)=>{
+  const el=e.target; if(!el.classList.contains("cli-com")) return;
+  const cid=Number(el.dataset.cid), val=el.value.trim();
+  el.closest("td")?.classList.add("saving");
+  try{
+    await api("update_cliente",{ id:cid, patch:{ comentarios:val } });
+    const cli=S.clientes.find(x=>x.id===cid); if(cli) cli.comentarios=val;
+    toast("Comentario guardado ✓");
+  }catch(ex){ toast(ex.message,true); }
+  finally{ el.closest("td")?.classList.remove("saving"); }
+});
 
 /* ---------------- DRILL-DOWN desde los gráficos ---------------- */
 $("#panel").addEventListener("click",(e)=>{
