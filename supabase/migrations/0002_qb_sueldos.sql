@@ -4,9 +4,9 @@
 -- validando el PIN de jefes (qb_config.pin_admin).
 -- ============================================================
 
--- 2º PIN (jefes). CAMBIAR el valor inicial.
+-- 2º PIN (jefes). El valor real se setea aparte y se cambia desde la UI (no se versiona).
 alter table public.qb_config add column if not exists pin_admin text;
-update public.qb_config set pin_admin = 'jefes2026' where id = 1 and (pin_admin is null or pin_admin = '');
+update public.qb_config set pin_admin = 'CAMBIAR-EN-UI' where id = 1 and (pin_admin is null or pin_admin = '');
 
 -- Bandas salariales (Escala de Aumentos)
 create table if not exists public.qb_bandas (

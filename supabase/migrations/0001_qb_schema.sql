@@ -72,7 +72,8 @@ create table if not exists public.qb_config (
   updated_at timestamptz not null default now(),
   constraint qb_config_singleton check (id = 1)
 );
-insert into public.qb_config(id, pin) values (1, 'qb2026') on conflict (id) do nothing;
+-- El PIN inicial se setea aparte (no se versiona). Cambiar desde la UI ("PIN").
+insert into public.qb_config(id, pin) values (1, 'CAMBIAR-EN-UI') on conflict (id) do nothing;
 
 -- Vista aplanada que consume la Edge Function
 create or replace view public.qb_vista as

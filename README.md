@@ -37,7 +37,7 @@ PIN normal no la ven. Reemplaza el Excel de sueldos y el papel de trabajo de eva
 
 Tablas: `qb_personas`, `qb_sueldos`, `qb_tareas`, `qb_evaluaciones`, `qb_bandas` (ver `0002_qb_sueldos.sql`).
 Acciones de la Edge Function con prefijo `rrhh_` (validadas contra el PIN de jefes). Front en `rrhh.js`.
-**PIN de jefes inicial: `jefes2026`** — cambiable desde el botón "PIN jefes" del módulo.
+El **PIN de jefes** se define en la base y se cambia desde el botón "PIN jefes" del módulo (nunca se versiona acá).
 
 ## Arquitectura
 
