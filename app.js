@@ -212,20 +212,26 @@ function renderBookkeeper(){
   src.forEach(f=>{ const bk=f.bookkeeper||f.bookkeeper_default||"(sin asignar)"; (byBk.get(bk)||byBk.set(bk,[]).get(bk)).push(f); });
   if(!src.length){ $("#panel").innerHTML=`<div class="empty">Sin resultados para “${esc(S.q)}”.</div>`; return; }
   let html=`<div class="bk-panel">`;
+  const _hoy=todayStr();
   [...byBk.entries()].sort((a,b)=>b[1].length-a[1].length).forEach(([bk,rows],i)=>{
     const s=stats(rows); const col=BK_COLORS[i%BK_COLORS.length];
+    const hoy=rows.filter(r=>r.estado==="Reconciliado"&&r.fecha_completado===_hoy).length;
     // empresas de este bookkeeper
     const cliMap=new Map();
     rows.forEach(r=>{ const k=r.cliente; const o=cliMap.get(k)||{tot:0,rec:0}; o.tot++; if(r.estado==="Reconciliado")o.rec++; cliMap.set(k,o); });
-    const clis=[...cliMap.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+    // empresas primero las que faltan, después alfabético
+    const clis=[...cliMap.entries()].sort((a,b)=>{ const da=a[1].rec===a[1].tot, db=b[1].rec===b[1].tot; if(da!==db) return da?1:-1; return a[0].localeCompare(b[0]); });
+    const doneCli=clis.filter(([,o])=>o.rec===o.tot).length;
     html+=`<div class="bk-card">
       <h3><span>${esc(bk)}</span><span class="pct" style="color:${col}">${s.pct}%</span></h3>
       <div class="prog-track"><div class="prog-fill" style="width:${s.pct}%;background:${col}"></div></div>
       <div class="bk-stat" style="margin-top:8px"><span>Empresas</span><b>${cliMap.size}</b></div>
       <div class="bk-stat"><span>Cuentas activas</span><b>${s.act}</b></div>
       <div class="bk-stat"><span>Reconciliadas</span><b style="color:var(--menta)">${s.rec}</b></div>
+      <div class="bk-stat"><span>Reconciliadas hoy</span><b style="color:${hoy?'var(--menta)':'var(--muted2)'}">${hoy||"—"}</b></div>
       <div class="bk-stat"><span>Pend. de Hacer</span><b style="color:var(--amber)">${s.pend}</b></div>
       <div class="bk-stat"><span>Pend. de Acceso</span><b style="color:var(--blue)">${s.acc}</b></div>
+      <div class="bk-cli-head">Empresas <span>${doneCli}/${cliMap.size} listas</span></div>
       <div class="bk-clientes">${clis.map(([nm,o])=>`
         <div class="bk-cli ${o.rec===o.tot?'done':''}"><span class="nm">${esc(nm)}</span><span class="st">${o.rec}/${o.tot}</span></div>`).join("")}</div>
     </div>`;
@@ -311,6 +317,41 @@ function isoWeek(d){
   const label=String(monday.getDate()).padStart(2,"0")+"/"+String(monday.getMonth()+1).padStart(2,"0");
   return { key, label };
 }
+// helpers de día (fecha_completado viene como "YYYY-MM-DD")
+function todayStr(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+function dayLabel(d){ const p=String(d).split("-"); return p[2]+"/"+p[1]; }
+const DIAS=["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
+function dayName(d){ return DIAS[new Date(d+"T00:00:00").getDay()]; }
+function bkOf(x){ return x.bookkeeper||x.bookkeeper_default||"(s/a)"; }
+
+// barras verticales APILADAS por persona (una columna por día)
+function vbarsStacked(cols, keys, colorOf, maxH=170){
+  if(!cols.length) return '<p class="muted">Sin datos todavía.</p>';
+  const max=Math.max(1,...cols.map(c=>c.total));
+  return `<div class="vbars stacked">`+cols.map(c=>{
+    const segs=keys.filter(k=>c.by[k]).map(k=>{
+      const h=Math.max(3,Math.round(c.by[k]/max*maxH));
+      return `<div class="vseg" style="height:${h}px;background:${colorOf(k)}" title="${esc(k)}: ${c.by[k]} el ${esc(c.label)}"></div>`;
+    }).join("");
+    return `<div class="vbar-col" title="${esc(c.sub)} ${esc(c.label)}: ${c.total} reconciliadas">
+      <div class="vbar-num">${c.total||""}</div>
+      <div class="vstack" style="height:${maxH}px">${segs}</div>
+      <div class="vbar-lbl"><b>${esc(c.sub)}</b><br>${esc(c.label)}</div>
+    </div>`;
+  }).join("")+`</div>`;
+}
+// matriz persona × día con totales
+function matrixTable(rows, days, dayTotals, grandTotal){
+  if(!rows.length) return '<p class="muted">Sin fechas de conciliación cargadas todavía.</p>';
+  const head=`<tr><th class="l">Persona</th>${days.map(d=>`<th title="${esc(d)}"><span class="mx-dn">${dayName(d)}</span><span class="mx-df">${dayLabel(d)}</span></th>`).join("")}<th class="mx-tot">Hoy</th><th class="mx-tot">Total</th></tr>`;
+  const body=rows.map(r=>`<tr>
+    <td class="l"><span class="dot" style="background:${r.color}"></span>${esc(r.bk)}</td>
+    ${r.cells.map(c=>`<td class="${c?'':'z'}">${c||"·"}</td>`).join("")}
+    <td class="mx-tot ${r.hoy?'hot':''}">${r.hoy||"·"}</td>
+    <td class="mx-tot"><b>${r.total}</b></td></tr>`).join("");
+  const foot=`<tr class="mx-foot"><td class="l">Total del día</td>${dayTotals.map(t=>`<td>${t||"·"}</td>`).join("")}<td class="mx-tot"></td><td class="mx-tot"><b>${grandTotal}</b></td></tr>`;
+  return `<div class="mx-wrap"><table class="mx-table"><tbody>${head}${body}${foot}</tbody></table></div>`;
+}
 
 function renderGraficos(){
   const f=scope();
@@ -319,12 +360,29 @@ function renderGraficos(){
   // 2) tipo
   const tipoSeg=[{label:"Bank",value:f.filter(x=>x.tipo==="Bank").length,color:"#5aa9ff"},
                  {label:"Credit Card",value:f.filter(x=>x.tipo==="Credit Card").length,color:"#b98bff"}];
+  // color estable por bookkeeper (se reutiliza en todos los gráficos)
+  const allBk=[...new Set(f.map(bkOf))].sort();
+  const bkColor={}; allBk.forEach((b,i)=>bkColor[b]=BK_COLORS[i%BK_COLORS.length]);
   // 3) avance por bookkeeper
-  const byBk=new Map(); f.forEach(x=>{ const b=x.bookkeeper||x.bookkeeper_default||"(s/a)"; (byBk.get(b)||byBk.set(b,[]).get(b)).push(x); });
-  const bkBars=[...byBk.entries()].map(([b,rows],i)=>({label:b,value:stats(rows).pct,sfx:"%",color:BK_COLORS[i%BK_COLORS.length],drill:"bookkeeper",key:b})).sort((a,b)=>b.value-a.value);
-  // 4) trabajo por semana (fecha_completado)
-  const wk=new Map(); f.forEach(x=>{ if(x.fecha_completado&&x.estado==="Reconciliado"){ const w=isoWeek(x.fecha_completado); const o=wk.get(w.key)||{label:w.label,value:0}; o.value++; wk.set(w.key,o);} });
-  const wkArr=[...wk.entries()].sort((a,b)=>a[0].localeCompare(b[0])).slice(-10).map(e=>e[1]);
+  const byBk=new Map(); f.forEach(x=>{ const b=bkOf(x); (byBk.get(b)||byBk.set(b,[]).get(b)).push(x); });
+  const bkBars=[...byBk.entries()].map(([b,rows])=>{ const s=stats(rows); return {label:`${b} · ${s.rec}/${s.act}`,value:s.pct,sfx:"%",color:bkColor[b],drill:"bookkeeper",key:b}; }).sort((a,b)=>b.value-a.value);
+  // 4) reconciliadas POR DÍA y POR PERSONA (fecha_completado)
+  const doneRec=f.filter(x=>x.estado==="Reconciliado"&&x.fecha_completado);
+  const daySet=[...new Set(doneRec.map(x=>x.fecha_completado))].sort();
+  const days=daySet.slice(-12);
+  const dayBkList=allBk.filter(b=>doneRec.some(x=>bkOf(x)===b));
+  const dayCols=days.map(d=>{ const by={}; let total=0;
+    doneRec.forEach(x=>{ if(x.fecha_completado===d){ const b=bkOf(x); by[b]=(by[b]||0)+1; total++; } });
+    return { key:d, label:dayLabel(d), sub:dayName(d), by, total }; });
+  const dayTotals=days.map(d=>doneRec.filter(x=>x.fecha_completado===d).length);
+  const _hoy=todayStr();
+  const matrixRows=dayBkList.map(b=>({
+    bk:b, color:bkColor[b],
+    cells: days.map(d=>doneRec.filter(x=>x.fecha_completado===d&&bkOf(x)===b).length),
+    hoy: doneRec.filter(x=>x.fecha_completado===_hoy&&bkOf(x)===b).length,
+    total: doneRec.filter(x=>bkOf(x)===b).length,
+  })).sort((a,b)=>b.total-a.total);
+  const dayLegend=`<div class="legend">`+dayBkList.map(b=>`<span class="drill" data-drill="bookkeeper" data-key="${esc(b)}"><i style="background:${bkColor[b]}"></i>${esc(b)} · ${doneRec.filter(x=>bkOf(x)===b).length}</span>`).join("")+`</div>`;
   // 5) clientes terminados
   const cliMap=new Map(); f.forEach(x=>{ const o=cliMap.get(x.cliente_id)||{tot:0,rec:0,inact:0}; o.tot++; if(x.estado==="Reconciliado")o.rec++; if(x.estado==="Inactive")o.inact++; cliMap.set(x.cliente_id,o); });
   let cliDone=0,cliParcial=0,cliCero=0;
@@ -354,8 +412,12 @@ function renderGraficos(){
 
     <div class="chart-card wide"><h3>Avance por bookkeeper</h3>${hbars(bkBars)}</div>
 
-    <div class="chart-card wide"><h3>Trabajo por semana (cuentas reconciliadas)</h3>
-      ${wkArr.length?vbars(wkArr):'<p class="muted">Sin fechas de conciliación cargadas todavía.</p>'}</div>
+    <div class="chart-card wide"><h3>Reconciliadas por día — por persona</h3>
+      ${dayCols.length?vbarsStacked(dayCols,dayBkList,b=>bkColor[b])+dayLegend
+        :'<p class="muted">Sin fechas de conciliación cargadas todavía. Cargá la <b>Fecha</b> al reconciliar cada cuenta para ver el trabajo por día.</p>'}</div>
+
+    <div class="chart-card wide"><h3>Detalle diario por persona <span class="muted" style="font-weight:400;font-size:12px">· últimos ${days.length||0} días con actividad</span></h3>
+      ${matrixTable(matrixRows,days,dayTotals,doneRec.length)}</div>
 
     <div class="chart-card"><h3>Checklist completado</h3>${hbars(chk.map(c=>({...c})))}</div>
 
