@@ -190,14 +190,14 @@ function renderGrid(){
       <span class="cli-count">${rec}/${rows.length} reconciliadas</span></td></tr>`;
     for(const r of rows){
       html+=`<tr data-id="${r.conc_id}">
-        <td class="l cuenta">${esc(r.cuenta)}${r.manual?'<span class="man-tag" title="Cuenta manual">M</span>':''}</td>
-        <td><span class="tipo-tag ${r.tipo==='Credit Card'?'cc':'bank'}">${r.tipo==='Credit Card'?'CC':'Bank'}</span></td>
-        <td><input type="checkbox" class="manual-ck" data-cuenta="${r.cuenta_id}" data-cfield="manual" ${r.manual?"checked":""} title="Marcar como manual"></td>
-        <td>${estadoSelect(r)}</td>
-        <td><input type="date" class="fecha" data-id="${r.conc_id}" data-field="fecha_completado" value="${r.fecha_completado||""}"></td>
-        <td class="l">${bkSelect(r)}</td>
-        ${BOOLS.map(b=>`<td><input type="checkbox" data-id="${r.conc_id}" data-field="${b[0]}" ${r[b[0]]?"checked":""}></td>`).join("")}
-        <td class="l"><input type="text" class="notas" data-id="${r.conc_id}" data-field="notas" value="${esc(r.notas||"")}" placeholder="…"></td>
+        <td class="l cuenta" data-label="Cuenta">${esc(r.cuenta)}${r.manual?'<span class="man-tag" title="Cuenta manual">M</span>':''}</td>
+        <td data-label="Tipo"><span class="tipo-tag ${r.tipo==='Credit Card'?'cc':'bank'}">${r.tipo==='Credit Card'?'CC':'Bank'}</span></td>
+        <td data-label="Manual"><input type="checkbox" class="manual-ck" data-cuenta="${r.cuenta_id}" data-cfield="manual" ${r.manual?"checked":""} title="Marcar como manual"></td>
+        <td data-label="Estado">${estadoSelect(r)}</td>
+        <td data-label="Fecha"><input type="date" class="fecha" data-id="${r.conc_id}" data-field="fecha_completado" value="${r.fecha_completado||""}"></td>
+        <td class="l" data-label="Bookkeeper">${bkSelect(r)}</td>
+        ${BOOLS.map(b=>`<td data-label="${b[1]}"><input type="checkbox" data-id="${r.conc_id}" data-field="${b[0]}" ${r[b[0]]?"checked":""}></td>`).join("")}
+        <td class="l notas-cell" data-label="Notas"><input type="text" class="notas" data-id="${r.conc_id}" data-field="notas" value="${esc(r.notas||"")}" placeholder="…"></td>
       </tr>`;
     }
   }
