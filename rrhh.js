@@ -66,7 +66,6 @@ function renderRRHH(){
       <div class="rr-brand">🔒 Sueldos & Evaluaciones <em>Chermisqui · confidencial</em></div>
       <div class="rr-actions">
         <span class="rr-nomina">Nómina <b>${usd(nomina)}</b> USD/mes · ${R.personas.length} personas</span>
-        <button class="btn ghost" id="rr-pin">PIN jefes</button>
         <button class="btn ghost" id="rr-close">✕ Volver</button>
       </div>
     </div>
@@ -76,7 +75,6 @@ function renderRRHH(){
     </div>
     <div class="rr-body" id="rr-body"></div>`;
   ov.querySelector("#rr-close").addEventListener("click",closeRRHH);
-  ov.querySelector("#rr-pin").addEventListener("click",cambiarPinJefes);
   ov.querySelectorAll(".rr-tab").forEach(b=>b.addEventListener("click",()=>{ R.view=b.dataset.v; renderRRHH(); }));
   const body=ov.querySelector("#rr-body");
   if(R.view==="equipo") body.innerHTML=viewEquipo();
@@ -272,14 +270,3 @@ function viewEscala(){
     </tbody></table></div>`;
 }
 
-/* ---- cambiar PIN de jefes ---- */
-function cambiarPinJefes(){
-  openModal("Cambiar PIN de jefes",`<label>Nuevo PIN (mín. 4)</label><input id="rp-pin" type="text">
-    <div class="modal-actions"><button class="btn ghost" id="rp-cancel">Cancelar</button><button class="btn primary" id="rp-save">Cambiar</button></div>`);
-  document.getElementById("rp-cancel").addEventListener("click",closeModal);
-  document.getElementById("rp-save").addEventListener("click",async ()=>{
-    const np=document.getElementById("rp-pin").value.trim(); if(np.length<4) return toast("PIN muy corto",true);
-    try{ await rapi("rrhh_set_pin",{new_pin:np}); R.pin=np; sessionStorage.setItem("qb_pin_admin",np); closeModal(); toast("PIN de jefes cambiado ✓"); }
-    catch(ex){ toast(ex.message,true); }
-  });
-}
