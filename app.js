@@ -8,13 +8,14 @@ const EST_COLOR = {
 // Checklist simplificado
 const BOOLS = [["conciliado","Conciliado"],["revisado","Revisado"],["memos_checks","Memos"]];
 const BK_COLORS = ["#2ee6a6","#5aa9ff","#b98bff","#ffb23e","#ff86c8","#46d5e6","#ff6b6b","#ffd05a"];
-// Prioridad por cliente (Alta/Media/Baja). Rank menor = más arriba.
-const PRIOS = ["Alta","Media","Baja"];
-const PRIO_RANK = { Alta:0, Media:1, Baja:2 };
+// Prioridad por cliente (Alta/Media/Baja/Sales Tax). Rank menor = más arriba.
+const PRIOS = ["Alta","Media","Baja","Sales Tax"];
+const PRIO_RANK = { Alta:0, Media:1, Baja:2, "Sales Tax":3 };
+const prioSlug = (p)=>String(p||"").replace(/\s+/g,"");   // "Sales Tax" -> "SalesTax" (clase CSS)
 const prioDe = (cid)=>(S.clientes.find(x=>x.id===cid)||{}).prioridad || "Media";
 function prioSelect(cid, cur){
   cur = cur || "Media";
-  return `<select class="cli-prio prio-${esc(cur)}" data-cid="${cid}" title="Prioridad del cliente">`+
+  return `<select class="cli-prio prio-${prioSlug(cur)}" data-cid="${cid}" title="Prioridad del cliente">`+
     PRIOS.map(p=>`<option ${p===cur?"selected":""}>${p}</option>`).join("")+`</select>`;
 }
 
@@ -197,7 +198,7 @@ function renderGrid(){
     const prio=prioDe(cid);
     html+=`<tr class="cli-row"><td class="l" colspan="${ncols}">
       <span class="cli-name">${esc(c.cliente)}</span>
-      <span class="prio-badge prio-${esc(prio)}" title="Prioridad ${esc(prio)}">${esc(prio)}</span>
+      <span class="prio-badge prio-${prioSlug(prio)}" title="Prioridad ${esc(prio)}">${esc(prio)}</span>
       <span class="cli-badge">${esc(c.bookkeeper_default||"—")}</span>
       ${comTip?`<span class="cli-com-ic" title="${esc(comTip)}">💬</span>`:""}
       <span class="cli-count">${rec}/${rows.length} reconciliadas</span></td></tr>`;
@@ -572,7 +573,7 @@ $("#btn-add-cuenta").addEventListener("click", ()=>{
     <select id="m-cli"><option value="">— nuevo cliente —</option>${cliOpts}</select>
     <div id="m-newcli"><label>Nombre del cliente nuevo</label><input id="m-clinombre" placeholder="Razón social">
       <div class="row2"><div><label>Bookkeeper asignado</label><select id="m-clibk">${bkOpts}</select></div>
-        <div><label>Prioridad</label><select id="m-cliprio"><option>Alta</option><option selected>Media</option><option>Baja</option></select></div></div></div>
+        <div><label>Prioridad</label><select id="m-cliprio"><option>Alta</option><option selected>Media</option><option>Baja</option><option>Sales Tax</option></select></div></div></div>
     <hr style="border-color:var(--line);margin:16px 0">
     <div class="row2"><div><label>Nombre de la cuenta</label><input id="m-cuenta" placeholder="Ej: Chase 1234"></div>
       <div><label>Tipo</label><select id="m-tipo"><option>Bank</option><option>Credit Card</option></select></div></div>
