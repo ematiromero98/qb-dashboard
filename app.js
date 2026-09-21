@@ -574,6 +574,8 @@ $("#panel").addEventListener("change", async (e)=>{
 
 /* ---------------- DRILL-DOWN desde los gráficos ---------------- */
 $("#panel").addEventListener("click",(e)=>{
+  const bkRow=e.target.closest("[data-drill-bk]");
+  if(bkRow){ S.fbk=bkRow.dataset.drillBk; nav("empresa"); toast(`Filtrado: ${bkRow.dataset.drillBk}`); return; }
   const el=e.target.closest("[data-drill]"); if(!el) return;
   const kind=el.dataset.drill, key=el.dataset.key;
   if(kind==="bookkeeper"){ S.fbk=key; renderAll(); return; }   // barra bookkeeper → filtra a esa persona
