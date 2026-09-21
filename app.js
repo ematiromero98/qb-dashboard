@@ -19,6 +19,12 @@ function prioSelect(cid, cur){
   return `<select class="cli-prio prio-${prioSlug(cur)}" data-cid="${cid}" title="Prioridad del cliente">`+
     PRIOS.map(p=>`<option ${p===cur?"selected":""}>${p}</option>`).join("")+`</select>`;
 }
+// chips coloreados con el conteo por prioridad (Alta/Media/Baja/Sales Tax)
+function prioChips(counts){
+  const s = PRIOS.map(p=>counts[p]
+    ? `<i class="pchip" style="background:${PRIO_COLOR[p]}22;color:${PRIO_COLOR[p]};border-color:${PRIO_COLOR[p]}66" title="${esc(p)}: ${counts[p]}">${counts[p]}</i>` : "").join("");
+  return s || '<span class="muted">—</span>';
+}
 
 const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
@@ -238,6 +244,16 @@ function renderBookkeeper(){
     // empresas primero las que faltan, después alfabético
     const clis=[...cliMap.entries()].sort((a,b)=>{ const da=a[1].rec===a[1].tot, db=b[1].rec===b[1].tot; if(da!==db) return da?1:-1; return a[0].localeCompare(b[0]); });
     const doneCli=clis.filter(([,o])=>o.rec===o.tot).length;
+    // desglose por prioridad (empresas, cuentas activas y pendientes de hacer)
+    const cuentasPrio={ "Alta":0,"Media":0,"Baja":0,"Sales Tax":0 };
+    const pendPrio={ "Alta":0,"Media":0,"Baja":0,"Sales Tax":0 };
+    const empPrio=new Map();
+    rows.forEach(r=>{ const p=PRIOS.includes(r.prioridad)?r.prioridad:"Media";
+      if(r.estado!=="Inactive") cuentasPrio[p]++;
+      if(r.estado==="Pendiente de Hacer") pendPrio[p]++;
+      if(!empPrio.has(r.cliente_id)) empPrio.set(r.cliente_id,p); });
+    const empPrioCount={ "Alta":0,"Media":0,"Baja":0,"Sales Tax":0 };
+    empPrio.forEach(p=>empPrioCount[p]++);
     html+=`<div class="bk-card">
       <h3><span>${esc(bk)}</span><span class="pct" style="color:${col}">${s.pct}%</span></h3>
       <div class="prog-track"><div class="prog-fill" style="width:${s.pct}%;background:${col}"></div></div>
@@ -247,6 +263,9 @@ function renderBookkeeper(){
       <div class="bk-stat"><span>Reconciliadas hoy</span><b style="color:${hoy?'var(--menta)':'var(--muted2)'}">${hoy||"—"}</b></div>
       <div class="bk-stat"><span>Pend. de Hacer</span><b style="color:var(--amber)">${s.pend}</b></div>
       <div class="bk-stat"><span>Pend. de Acceso</span><b style="color:var(--blue)">${s.acc}</b></div>
+      <div class="bk-prio"><span class="bk-prio-l">Empresas x prioridad</span>${prioChips(empPrioCount)}</div>
+      <div class="bk-prio"><span class="bk-prio-l">Cuentas x prioridad</span>${prioChips(cuentasPrio)}</div>
+      <div class="bk-prio"><span class="bk-prio-l">Pendientes x prioridad</span>${prioChips(pendPrio)}</div>
       <div class="bk-cli-head">Empresas <span>${doneCli}/${cliMap.size} listas</span></div>
       <div class="bk-clientes">${clis.map(([nm,o])=>`
         <div class="bk-cli ${o.rec===o.tot?'done':''}"><span class="nm">${esc(nm)}</span><span class="st">${o.rec}/${o.tot}</span></div>`).join("")}</div>
@@ -333,7 +352,60 @@ function renderPrioridades(){
         ${prioLegend}
         <div class="prio-bk-head"><span>Bookkeeper</span><span class="muted">Alta / Media / Baja / Sales Tax</span></div>
         ${bars}</div>
+
+      <div class="chart-card wide">
+        <div class="prio-list-head"><h3>Listado de empresas y prioridades</h3>
+          <div class="prio-list-actions">
+            <button class="btn ghost" id="prio-csv">⬇ Excel (CSV)</button>
+            <button class="btn ghost" id="prio-print">🖨 Imprimir / PDF</button>
+          </div></div>
+        <table class="prio-list">
+          <thead><tr><th>Empresa</th><th>Bookkeeper</th><th>Prioridad</th><th>Comentario</th></tr></thead>
+          <tbody>${clientesPrioridadOrdenados().map(c=>{ const p=PRIOS.includes(c.prioridad)?c.prioridad:"Media";
+            return `<tr><td>${esc(c.nombre)}</td><td>${esc(c.bookkeeper_default||"—")}</td>
+              <td><span class="prio-badge prio-${prioSlug(p)}">${esc(p)}</span></td>
+              <td class="muted">${esc(c.comentarios||"")}</td></tr>`; }).join("")}</tbody>
+        </table></div>
     </div></div>`;
+  $("#prio-csv")?.addEventListener("click", exportClientesPrioridadCSV);
+  $("#prio-print")?.addEventListener("click", printClientesPrioridad);
+}
+
+// clientes activos ordenados por prioridad (Alta primero) y luego por nombre
+function clientesPrioridadOrdenados(){
+  return S.clientes.filter(c=>c.activo!==false).slice().sort((a,b)=>
+    (PRIO_RANK[a.prioridad||"Media"]-PRIO_RANK[b.prioridad||"Media"]) || a.nombre.localeCompare(b.nombre));
+}
+function exportClientesPrioridadCSV(){
+  const rows=clientesPrioridadOrdenados();
+  const head=["Empresa","Bookkeeper","Prioridad","Comentario"];
+  const csv=[head.join(",")].concat(rows.map(c=>[c.nombre,c.bookkeeper_default||"",
+    (PRIOS.includes(c.prioridad)?c.prioridad:"Media"),c.comentarios||""]
+    .map(v=>`"${String(v).replace(/"/g,'""')}"`).join(","))).join("\r\n");
+  const blob=new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download=`QB_Prioridades_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+  toast("Excel descargado ✓");
+}
+function printClientesPrioridad(){
+  const rows=clientesPrioridadOrdenados();
+  const body=rows.map(c=>{ const p=PRIOS.includes(c.prioridad)?c.prioridad:"Media";
+    return `<tr><td>${esc(c.nombre)}</td><td>${esc(c.bookkeeper_default||"")}</td>`+
+      `<td><b style="color:${PRIO_COLOR[p]}">${esc(p)}</b></td><td>${esc(c.comentarios||"")}</td></tr>`; }).join("");
+  const w=window.open("","_blank");
+  if(!w){ toast("Habilitá las ventanas emergentes para imprimir",true); return; }
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8">`+
+    `<title>Prioridades — QB Dashboard</title>`+
+    `<style>body{font-family:Arial,Helvetica,sans-serif;margin:24px;color:#111}`+
+    `h1{font-size:18px;margin:0 0 4px}p{color:#666;margin:0 0 16px;font-size:12px}`+
+    `table{width:100%;border-collapse:collapse;font-size:12px}`+
+    `th,td{border:1px solid #ccc;padding:6px 8px;text-align:left;vertical-align:top}`+
+    `th{background:#f0f0f0}td:last-child{width:230px}@media print{@page{margin:14mm}}</style></head>`+
+    `<body><h1>Listado de empresas y prioridades</h1>`+
+    `<p>Chermisqui &amp; Associates · ${new Date().toLocaleDateString("es-AR")} · ${rows.length} empresas</p>`+
+    `<table><thead><tr><th>Empresa</th><th>Bookkeeper</th><th>Prioridad</th><th>Comentario</th></tr></thead>`+
+    `<tbody>${body}</tbody></table></body></html>`);
+  w.document.close(); w.focus(); setTimeout(()=>{ try{ w.print(); }catch(e){} }, 350);
 }
 
 /* ---------------- DASHBOARD DE GRÁFICOS ---------------- */
