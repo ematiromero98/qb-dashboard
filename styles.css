@@ -93,6 +93,21 @@ select:focus,input:focus{outline:none;border-color:var(--menta)}
 .cli-prio.prio-Media{color:var(--amber);border-color:rgba(255,178,62,.4)}
 .cli-prio.prio-Baja{color:var(--muted)}
 .cli-prio.prio-SalesTax{color:var(--violet);border-color:rgba(185,139,255,.4)}
+/* Vista Prioridades */
+.prio-wrap{padding:14px 0}
+.prio-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:16px}
+.prio-tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 15px}
+.prio-tile .n{font-size:25px;font-weight:700;line-height:1}
+.prio-tile .l{font-size:11px;text-transform:uppercase;letter-spacing:.4px;margin-top:6px;color:var(--muted)}
+.prio-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:2px 0 14px}
+.prio-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.prio-bk-head{display:grid;grid-template-columns:150px 1fr auto;gap:12px;font-size:11px;text-transform:uppercase;
+  letter-spacing:.3px;color:var(--muted2);padding-bottom:6px;border-bottom:1px solid var(--line);margin-bottom:8px}
+.prio-bk-row{display:grid;grid-template-columns:150px 1fr auto;gap:12px;align-items:center;margin:9px 0}
+.prio-bk-name{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prio-stack{display:flex;height:22px;border-radius:6px;overflow:hidden;background:var(--bg2)}
+.prio-stack i{display:block;height:100%}
+.prio-bk-counts{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 .cli-count{color:var(--muted2);font-size:11px;float:right}
 .cuenta{font-weight:600}
 .tipo-tag{font-size:10.5px;padding:2px 7px;border-radius:6px;border:1px solid var(--line2);color:var(--muted)}

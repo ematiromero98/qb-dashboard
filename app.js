@@ -11,6 +11,7 @@ const BK_COLORS = ["#2ee6a6","#5aa9ff","#b98bff","#ffb23e","#ff86c8","#46d5e6","
 // Prioridad por cliente (Alta/Media/Baja/Sales Tax). Rank menor = más arriba.
 const PRIOS = ["Alta","Media","Baja","Sales Tax"];
 const PRIO_RANK = { Alta:0, Media:1, Baja:2, "Sales Tax":3 };
+const PRIO_COLOR = { "Alta":"#ff6b6b", "Media":"#ffb23e", "Baja":"#2ee6a6", "Sales Tax":"#b98bff" };
 const prioSlug = (p)=>String(p||"").replace(/\s+/g,"");   // "Sales Tax" -> "SalesTax" (clase CSS)
 const prioDe = (cid)=>(S.clientes.find(x=>x.id===cid)||{}).prioridad || "Media";
 function prioSelect(cid, cur){
@@ -96,6 +97,7 @@ function renderView(){
   if(isGrid) renderGrid();
   else if(S.view==="bookkeeper") renderBookkeeper();
   else if(S.view==="empresa") renderEmpresa();
+  else if(S.view==="prioridades") renderPrioridades();
   else if(S.view==="graficos") renderGraficos();
 }
 // scope global (bookkeeper + tipo): mueve KPIs y gráficos a la persona elegida
@@ -284,6 +286,54 @@ function renderEmpresa(){
   }
   html+=`</tbody></table>`;
   $("#panel").innerHTML=html;
+}
+
+/* ---------------- PRIORIDADES (por bookkeeper) ---------------- */
+function renderPrioridades(){
+  const cli = S.clientes.filter(c=>c.activo!==false);
+  const totals = { "Alta":0, "Media":0, "Baja":0, "Sales Tax":0 };
+  const byBk = new Map();
+  cli.forEach(c=>{
+    const p = PRIOS.includes(c.prioridad) ? c.prioridad : "Media";
+    totals[p]++;
+    const bk = c.bookkeeper_default || "(sin asignar)";
+    const o = byBk.get(bk) || { "Alta":0, "Media":0, "Baja":0, "Sales Tax":0, total:0 };
+    o[p]++; o.total++; byBk.set(bk,o);
+  });
+  const rows = [...byBk.entries()].sort((a,b)=>b[1].total-a[1].total);
+  const maxTot = Math.max(1, ...rows.map(r=>r[1].total));
+
+  const tiles = PRIOS.map(p=>`
+    <div class="prio-tile" style="border-left:4px solid ${PRIO_COLOR[p]}">
+      <div class="n">${totals[p]}</div><div class="l">${esc(p)}</div></div>`).join("")+
+    `<div class="prio-tile"><div class="n">${cli.length}</div><div class="l">Clientes</div></div>`;
+
+  const prioLegend = `<div class="prio-legend">`+PRIOS.map(p=>
+    `<span><i style="background:${PRIO_COLOR[p]}"></i>${esc(p)} · ${totals[p]}</span>`).join("")+`</div>`;
+
+  const seg = PRIOS.map(p=>({label:p, value:totals[p], color:PRIO_COLOR[p], key:p}));
+
+  const bars = rows.map(([bk,o])=>{
+    const stack = PRIOS.map(p=>o[p]>0
+      ? `<i style="width:${o[p]/maxTot*100}%;background:${PRIO_COLOR[p]}" title="${esc(p)}: ${o[p]}"></i>` : "").join("");
+    const counts = PRIOS.map(p=>o[p]).join(" / ");
+    return `<div class="prio-bk-row" data-drill-bk="${esc(bk)}">
+      <div class="prio-bk-name">${esc(bk)} <span class="muted">${o.total}</span></div>
+      <div class="prio-stack">${stack}</div>
+      <div class="prio-bk-counts">${counts}</div></div>`;
+  }).join("");
+
+  $("#panel").innerHTML = `<div class="prio-wrap">
+    <div class="prio-tiles">${tiles}</div>
+    <div class="charts">
+      <div class="chart-card"><h3>Distribución de prioridades</h3>
+        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">${donut(seg)}
+          <div style="flex:1;min-width:150px">${prioLegend}</div></div></div>
+      <div class="chart-card wide"><h3>Clientes por bookkeeper</h3>
+        ${prioLegend}
+        <div class="prio-bk-head"><span>Bookkeeper</span><span class="muted">Alta / Media / Baja / Sales Tax</span></div>
+        ${bars}</div>
+    </div></div>`;
 }
 
 /* ---------------- DASHBOARD DE GRÁFICOS ---------------- */
