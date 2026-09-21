@@ -8,6 +8,15 @@ const EST_COLOR = {
 // Checklist simplificado
 const BOOLS = [["conciliado","Conciliado"],["revisado","Revisado"],["memos_checks","Memos"]];
 const BK_COLORS = ["#2ee6a6","#5aa9ff","#b98bff","#ffb23e","#ff86c8","#46d5e6","#ff6b6b","#ffd05a"];
+// Prioridad por cliente (Alta/Media/Baja). Rank menor = más arriba.
+const PRIOS = ["Alta","Media","Baja"];
+const PRIO_RANK = { Alta:0, Media:1, Baja:2 };
+const prioDe = (cid)=>(S.clientes.find(x=>x.id===cid)||{}).prioridad || "Media";
+function prioSelect(cid, cur){
+  cur = cur || "Media";
+  return `<select class="cli-prio prio-${esc(cur)}" data-cid="${cid}" title="Prioridad del cliente">`+
+    PRIOS.map(p=>`<option ${p===cur?"selected":""}>${p}</option>`).join("")+`</select>`;
+}
 
 const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
@@ -179,12 +188,16 @@ function renderGrid(){
   const groups=new Map();
   f.forEach(x=>{ if(!groups.has(x.cliente_id)) groups.set(x.cliente_id,[]); groups.get(x.cliente_id).push(x); });
   const ncols=6+BOOLS.length+1; let html="";
-  for(const [cid,rows] of groups){
+  const orden=[...groups.entries()].sort((a,b)=>
+    PRIO_RANK[prioDe(a[0])]-PRIO_RANK[prioDe(b[0])] || a[1][0].cliente.localeCompare(b[1][0].cliente));
+  for(const [cid,rows] of orden){
     const c=rows[0]; const rec=rows.filter(r=>r.estado==="Reconciliado").length;
     const cliRow=S.clientes.find(x=>x.id===cid)||{};
     const comTip=(cliRow.comentarios||"").trim();
+    const prio=prioDe(cid);
     html+=`<tr class="cli-row"><td class="l" colspan="${ncols}">
       <span class="cli-name">${esc(c.cliente)}</span>
+      <span class="prio-badge prio-${esc(prio)}" title="Prioridad ${esc(prio)}">${esc(prio)}</span>
       <span class="cli-badge">${esc(c.bookkeeper_default||"—")}</span>
       ${comTip?`<span class="cli-com-ic" title="${esc(comTip)}">💬</span>`:""}
       <span class="cli-count">${rec}/${rows.length} reconciliadas</span></td></tr>`;
@@ -245,17 +258,18 @@ function renderEmpresa(){
   const src=filtered();
   const groups=new Map();
   src.forEach(x=>{ if(!groups.has(x.cliente_id)) groups.set(x.cliente_id,[]); groups.get(x.cliente_id).push(x); });
-  const arr=[...groups.values()].sort((a,b)=>a[0].cliente.localeCompare(b[0].cliente));
+  const arr=[...groups.values()].sort((a,b)=>
+    PRIO_RANK[prioDe(a[0].cliente_id)]-PRIO_RANK[prioDe(b[0].cliente_id)] || a[0].cliente.localeCompare(b[0].cliente));
   if(!arr.length){ $("#panel").innerHTML=`<div class="empty">Sin resultados para “${esc(S.q)}”.</div>`; return; }
   let html=`<table class="emp-table"><thead><tr>
-    <th>Empresa / Cuenta</th><th>Bookkeeper</th><th>Tipo</th><th>Estado</th>
+    <th>Empresa / Cuenta</th><th>Bookkeeper</th><th>Prioridad</th><th></th>
     <th class="r">Avance</th></tr></thead><tbody>`;
   for(const rows of arr){
     const c=rows[0]; const s=stats(rows);
     const cli=S.clientes.find(x=>x.id===c.cliente_id)||{};
     const com=cli.comentarios||"";
     html+=`<tr class="emp-cli"><td>${esc(c.cliente)} <span class="muted" style="font-weight:400">· ${rows.length} cuentas</span></td>
-      <td>${esc(c.bookkeeper_default||"—")}</td><td></td><td></td>
+      <td>${esc(c.bookkeeper_default||"—")}</td><td colspan="2">${prioSelect(c.cliente_id, cli.prioridad)}</td>
       <td class="r"><span class="mini-prog"><i style="width:${s.pct}%"></i></span>${s.pct}%</td></tr>`;
     html+=`<tr class="emp-com"><td colspan="5"><span class="com-ic">💬</span>
       <input class="cli-com" data-cid="${c.cliente_id}" value="${esc(com)}" placeholder="Comentario del cliente (se mantiene mes a mes, visible para el equipo)…"></td></tr>`;
@@ -482,7 +496,21 @@ $("#btn-refresh").addEventListener("click", async ()=>{ await load(); toast("Act
 
 /* ---------------- COMENTARIOS por cliente ---------------- */
 $("#panel").addEventListener("change", async (e)=>{
-  const el=e.target; if(!el.classList.contains("cli-com")) return;
+  const el=e.target;
+  if(el.classList.contains("cli-prio")){
+    const cid=Number(el.dataset.cid), val=el.value;
+    el.closest("td")?.classList.add("saving");
+    try{
+      await api("update_cliente",{ id:cid, patch:{ prioridad:val } });
+      const cli=S.clientes.find(x=>x.id===cid); if(cli) cli.prioridad=val;
+      S.filas.forEach(f=>{ if(f.cliente_id===cid) f.prioridad=val; });
+      toast("Prioridad guardada ✓");
+      renderView(); // re-ordena por la nueva prioridad
+    }catch(ex){ toast(ex.message,true); }
+    finally{ el.closest("td")?.classList.remove("saving"); }
+    return;
+  }
+  if(!el.classList.contains("cli-com")) return;
   const cid=Number(el.dataset.cid), val=el.value.trim();
   el.closest("td")?.classList.add("saving");
   try{
@@ -543,7 +571,8 @@ $("#btn-add-cuenta").addEventListener("click", ()=>{
     <label>Cliente existente</label>
     <select id="m-cli"><option value="">— nuevo cliente —</option>${cliOpts}</select>
     <div id="m-newcli"><label>Nombre del cliente nuevo</label><input id="m-clinombre" placeholder="Razón social">
-      <label>Bookkeeper asignado</label><select id="m-clibk">${bkOpts}</select></div>
+      <div class="row2"><div><label>Bookkeeper asignado</label><select id="m-clibk">${bkOpts}</select></div>
+        <div><label>Prioridad</label><select id="m-cliprio"><option>Alta</option><option selected>Media</option><option>Baja</option></select></div></div></div>
     <hr style="border-color:var(--line);margin:16px 0">
     <div class="row2"><div><label>Nombre de la cuenta</label><input id="m-cuenta" placeholder="Ej: Chase 1234"></div>
       <div><label>Tipo</label><select id="m-tipo"><option>Bank</option><option>Credit Card</option></select></div></div>
@@ -559,7 +588,7 @@ async function saveCuenta(){
   try{
     let cliente_id=$("#m-cli").value;
     if(!cliente_id){ const nombre=$("#m-clinombre").value.trim(); if(!nombre) return toast("Falta el nombre del cliente",true);
-      const r=await api("add_cliente",{ nombre, bookkeeper_default:$("#m-clibk").value||null }); cliente_id=r.cliente.id; }
+      const r=await api("add_cliente",{ nombre, bookkeeper_default:$("#m-clibk").value||null, prioridad:$("#m-cliprio")?.value||"Media" }); cliente_id=r.cliente.id; }
     await api("add_cuenta",{ cliente_id:Number(cliente_id), nombre:cuenta, tipo:$("#m-tipo").value, manual:$("#m-manual").checked, periodo_id:S.periodo_id });
     closeModal(); await load(); toast("Cuenta agregada ✓");
   }catch(ex){ toast(ex.message,true); }
@@ -598,8 +627,8 @@ $("#btn-pin").addEventListener("click", ()=>{
 /* ---------------- EXPORT CSV ---------------- */
 $("#btn-export").addEventListener("click", ()=>{
   const f=(["todo","pendientes","acceso","escalar","falta","nueva"].includes(S.view))?filtered():S.filas;
-  const cols=["cliente","cuenta","tipo","manual","estado","fecha_completado","bookkeeper",...BOOLS.map(b=>b[0]),"notas"];
-  const head=["Cliente","Cuenta","Tipo","Manual","Estado","Fecha","Bookkeeper",...BOOLS.map(b=>b[1]),"Notas"];
+  const cols=["cliente","prioridad","cuenta","tipo","manual","estado","fecha_completado","bookkeeper",...BOOLS.map(b=>b[0]),"notas"];
+  const head=["Cliente","Prioridad","Cuenta","Tipo","Manual","Estado","Fecha","Bookkeeper",...BOOLS.map(b=>b[1]),"Notas"];
   const csv=[head.join(",")].concat(f.map(r=>cols.map(c=>{
     let v=r[c]; if(typeof v==="boolean") v=v?"SI":""; v=v==null?"":String(v);
     return `"${v.replace(/"/g,'""')}"`; }).join(","))).join("\r\n");
