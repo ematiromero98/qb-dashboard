@@ -348,8 +348,15 @@ td.saving{opacity:.5}
 @media(max-width:760px){
   body{font-size:13.5px}
 
-  /* ---- Topbar: marca arriba, acciones en una fila deslizable ---- */
-  .topbar{flex-direction:column;align-items:stretch;gap:10px;padding:10px 12px}
+  /* CLAVE: en el celular la app scrollea como una pagina normal (no una
+     ventanita interna). Asi se ve TODO —KPIs, tabs y toda la grilla— sin
+     quedar apretado en un recuadro chico. */
+  .app{height:auto;min-height:100dvh;overflow:visible;display:block}
+  .content{flex:none;min-height:0;overflow:visible}
+
+  /* ---- Topbar: marca arriba, acciones en una fila deslizable (queda fija arriba) ---- */
+  .topbar{flex-direction:column;align-items:stretch;gap:10px;padding:10px 12px;
+    position:sticky;top:0;z-index:30}
   .brand{font-size:16px;display:flex;align-items:center;flex-wrap:wrap;gap:4px}
   .brand em{margin-left:0}
   .top-actions{gap:7px;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;
@@ -440,4 +447,13 @@ td.saving{opacity:.5}
   .rr-body{padding:14px 14px 42px}
   .rr-grid{grid-template-columns:1fr}
   .charts{grid-template-columns:1fr}
+
+  /* ---- Prioridades ---- */
+  .prio-tiles{grid-template-columns:1fr 1fr;gap:8px}
+  .prio-bk-head,.prio-bk-row{grid-template-columns:88px 1fr;gap:8px}
+  .prio-bk-head span:last-child{display:none}          /* el subtitulo largo se oculta */
+  .prio-bk-counts{grid-column:1 / -1;text-align:right;margin-top:2px}
+  .prio-list-head{align-items:flex-start}
+  .prio-list-actions{flex:1 1 100%}
+  .prio-list-actions .btn{flex:1 1 45%}
 }
