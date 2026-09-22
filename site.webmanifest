@@ -1,0 +1,28 @@
+{
+  "name": "QB Dashboard — Chermisqui",
+  "short_name": "QB Dashboard",
+  "description": "Conciliaciones de QuickBooks — Chermisqui",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#0e151d",
+  "theme_color": "#0e151d",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
