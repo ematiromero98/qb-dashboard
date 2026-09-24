@@ -462,9 +462,8 @@ function renderAuditorias(){
   const cliF = q ? cli.filter(c=>(c.nombre||"").toLowerCase().includes(q)) : cli;
 
   const byPrio=(a,b)=>PRIO_RANK[a.prioridad||"Media"]-PRIO_RANK[b.prioridad||"Media"]||a.nombre.localeCompare(b.nombre);
-  const delMes = cliF.filter(c=>scheduledIn(c,M));
-  const pend = delMes.filter(c=>!hechaEn(c.id,M)).sort(byPrio);
-  const done = delMes.filter(c=>hechaEn(c.id,M)).sort((a,b)=>a.nombre.localeCompare(b.nombre));
+  const pend = cliF.filter(c=>scheduledIn(c,M) && !hechaEn(c.id,M)).sort(byPrio);
+  const done = cliF.filter(c=>hechaEn(c.id,M)).sort((a,b)=>a.nombre.localeCompare(b.nombre));
 
   // calendario: desde el mes actual (o el arranque más temprano) hacia adelante
   let calStart = mesActual();
@@ -472,7 +471,7 @@ function renderAuditorias(){
   const meses=[]; for(let i=0;i<8;i++) meses.push(mesAdd(calStart,i));
   const hoy = mesActual();
   const mStats = meses.map(m=>{ let sched=0,hechas=0;
-    cliF.forEach(c=>{ if(scheduledIn(c,m)){ sched++; if(hechaEn(c.id,m)) hechas++; } });
+    cliF.forEach(c=>{ const h=hechaEn(c.id,m); if(scheduledIn(c,m)||h){ sched++; if(h) hechas++; } });
     return { m, sched, hechas, pend:sched-hechas }; });
 
   // resumen del período visible + por frecuencia
@@ -735,13 +734,23 @@ $("#panel").addEventListener("change", async (e)=>{
   const el=e.target;
   if(el.classList.contains("audit-ck")){
     const cid=Number(el.dataset.cid), mes=el.dataset.mes, hecho=el.checked;
+    const c=S.clientes.find(x=>x.id===cid);
+    const freqN = c ? (AUDIT_MESES[c.audit_freq]||0) : 0;
     el.closest("td")?.classList.add("saving");
     try{
       await api("audit_toggle",{ cliente_id:cid, mes, hecho });
       S.auditorias=S.auditorias.filter(a=>!(a.cliente_id===cid && a.mes===mes));
       if(hecho) S.auditorias.push({ cliente_id:cid, mes, hecho:true, fecha:new Date().toISOString().slice(0,10) });
-      toast(hecho?"Auditoría marcada ✓":"Desmarcada");
-      renderView(); // recalcula vencimientos
+      // reprogramar la próxima: hecha => mes + frecuencia; desmarcada => vuelve a ese mes
+      if(freqN>0){
+        const nuevo = hecho ? mesAdd(mes, freqN) : mes;
+        if(c && c.audit_prox!==nuevo){
+          await api("update_cliente",{ id:cid, patch:{ audit_prox:nuevo } });
+          c.audit_prox=nuevo;
+        }
+      }
+      toast(hecho?(freqN?`Hecha ✓ · próxima ${mesLabel(mesAdd(mes,freqN))}`:"Hecha ✓"):"Desmarcada");
+      renderView();
     }catch(ex){ toast(ex.message,true); el.checked=!hecho; }
     finally{ el.closest("td")?.classList.remove("saving"); }
     return;
