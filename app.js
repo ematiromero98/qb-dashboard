@@ -75,7 +75,7 @@ async function load(){
   const d=await api("bootstrap",{ periodo_id:S.periodo_id });
   S.periodos=d.periodos; S.periodo_id=d.periodo_id; S.clientes=d.clientes; S.filas=d.filas;
   S.auditorias=d.auditorias||[];
-  if(!S.auditMes) S.auditMes=mesActual();
+  if(!S.auditMes){ const t=mesActual(); S.auditMes = t<"2026-10" ? "2026-10" : t; }
   const set=new Set();
   d.clientes.forEach(c=>c.bookkeeper_default&&set.add(c.bookkeeper_default));
   d.filas.forEach(f=>f.bookkeeper&&set.add(f.bookkeeper));
@@ -420,73 +420,66 @@ function printClientesPrioridad(){
 }
 
 /* ---------------- AUDITORÍAS CONTABLES ---------------- */
+function mesIdx(m){ const [y,mm]=m.split("-").map(Number); return y*12+(mm-1); }
+function auditTracked(c){ return !!c.audit_freq && c.audit_freq!=="Ninguna" && !!c.audit_prox; }
+// ¿el cliente tiene auditoría programada en el mes M? (agenda = audit_prox + frecuencia)
+function scheduledIn(c, M){
+  if(!auditTracked(c)) return false;
+  const d=mesIdx(M)-mesIdx(c.audit_prox);
+  return d>=0 && d % AUDIT_MESES[c.audit_freq]===0;
+}
+function hechaEn(cid, M){ return S.auditorias.some(a=>a.cliente_id===cid && a.mes===M && a.hecho); }
 function auditFreqSelect(c){
   const cur=c.audit_freq||"";
   return `<select class="audit-freq" data-cid="${c.id}">`+
     `<option value="" ${cur===""?"selected":""}>—</option>`+
     AUDIT_FREQS.map(f=>`<option ${f===cur?"selected":""}>${f}</option>`).join("")+`</select>`;
 }
-// info de auditoría de un cliente para el mes M
-function auditInfo(c, M){
-  const freq=c.audit_freq;
-  const tracked = !!freq && freq!=="Ninguna";
-  const hechas=S.auditorias.filter(a=>a.cliente_id===c.id && a.hecho).map(a=>a.mes).sort();
-  const ultima = hechas.length ? hechas[hechas.length-1] : null;
-  const doneM = S.auditorias.some(a=>a.cliente_id===c.id && a.mes===M && a.hecho);
-  let nextDue=null, estado="";
-  if(tracked){
-    nextDue = ultima ? mesAdd(ultima, AUDIT_MESES[freq]) : null;   // null = nunca => vence ya
-    if(doneM) estado="hecha";
-    else if(nextDue===null || nextDue<=M) estado="pendiente";
-    else estado="proxima";
-  }
-  return { freq, tracked, ultima, doneM, nextDue, estado };
-}
-function auditRow(c, M, info){
+function auditRow(c, M){
   const p = PRIOS.includes(c.prioridad)?c.prioridad:"Media";
-  const overdue = info.nextDue && info.nextDue<M;
-  const tag = info.estado==="pendiente"
-      ? (overdue?`<span class="audit-tag over">vencida · ${mesLabel(info.nextDue)}</span>`:`<span class="audit-tag due">este mes</span>`)
-    : info.estado==="proxima" ? `<span class="muted">vence ${mesLabel(info.nextDue)}</span>` : "";
-  return `<tr>
+  const done = hechaEn(c.id, M);
+  return `<tr class="${done?'audit-done':''}">
     <td>${esc(c.nombre)}</td>
     <td>${esc(c.bookkeeper_default||"—")}</td>
     <td><span class="prio-badge prio-${prioSlug(p)}">${esc(p)}</span></td>
     <td>${auditFreqSelect(c)}</td>
-    <td class="muted">${info.ultima?mesLabel(info.ultima):"—"} ${tag}</td>
-    <td><input type="checkbox" class="audit-ck" data-cid="${c.id}" data-mes="${M}" ${info.doneM?"checked":""} title="Marcar auditoría hecha en ${mesLabel(M)}"></td>
+    <td><input type="month" class="audit-prox" data-cid="${c.id}" value="${esc(c.audit_prox||"")}" title="Mes de arranque de la agenda"></td>
+    <td><input type="text" class="audit-nota" data-cid="${c.id}" value="${esc(c.audit_nota||"")}" placeholder="info pedida…"></td>
+    <td class="tc"><input type="checkbox" class="audit-ck" data-cid="${c.id}" data-mes="${M}" ${done?"checked":""} title="Marcar hecha en ${mesLabel(M)}"></td>
   </tr>`;
 }
 function auditTable(rows, M){
   if(!rows.length) return `<p class="muted" style="padding:6px 2px">Nada acá.</p>`;
   return `<table class="audit-table"><thead><tr>
-    <th>Empresa</th><th>Bookkeeper</th><th>Prioridad</th><th>Frecuencia</th><th>Última / estado</th><th>Hecha</th>
-    </tr></thead><tbody>${rows.map(r=>auditRow(r.c,M,r.info)).join("")}</tbody></table>`;
+    <th>Empresa</th><th>Bookkeeper</th><th>Prioridad</th><th>Frecuencia</th><th>Desde</th><th>Nota / info</th><th>Hecha</th>
+    </tr></thead><tbody>${rows.map(c=>auditRow(c,M)).join("")}</tbody></table>`;
 }
 function renderAuditorias(){
   const M = S.auditMes || mesActual();
   let cli = S.clientes.filter(c=>c.activo!==false);
   if(S.fbk) cli=cli.filter(c=>c.bookkeeper_default===S.fbk);
-  if(S.q){ const q=S.q.toLowerCase(); cli=cli.filter(c=>(c.nombre||"").toLowerCase().includes(q)); }
+  const q = S.q ? S.q.toLowerCase() : "";
+  const cliF = q ? cli.filter(c=>(c.nombre||"").toLowerCase().includes(q)) : cli;
 
-  const pend=[], hechas=[], prox=[]; let sinAudit=0;
-  cli.forEach(c=>{ const info=auditInfo(c,M);
-    if(!info.tracked){ sinAudit++; return; }
-    const o={c,info};
-    if(info.estado==="hecha") hechas.push(o);
-    else if(info.estado==="pendiente") pend.push(o);
-    else prox.push(o);
-  });
-  const byPrio=(a,b)=>PRIO_RANK[a.c.prioridad||"Media"]-PRIO_RANK[b.c.prioridad||"Media"]||a.c.nombre.localeCompare(b.c.nombre);
-  pend.sort(byPrio); hechas.sort((a,b)=>a.c.nombre.localeCompare(b.c.nombre));
-  prox.sort((a,b)=>(a.info.nextDue||"").localeCompare(b.info.nextDue||"")||a.c.nombre.localeCompare(b.c.nombre));
+  const byPrio=(a,b)=>PRIO_RANK[a.prioridad||"Media"]-PRIO_RANK[b.prioridad||"Media"]||a.nombre.localeCompare(b.nombre);
+  const delMes = cliF.filter(c=>scheduledIn(c,M));
+  const pend = delMes.filter(c=>!hechaEn(c.id,M)).sort(byPrio);
+  const done = delMes.filter(c=>hechaEn(c.id,M)).sort((a,b)=>a.nombre.localeCompare(b.nombre));
 
-  // planner: próximos 6 meses (primer vencimiento por cliente)
-  const meses=[]; for(let i=0;i<6;i++) meses.push(mesAdd(M,i));
-  const cnt={}; meses.forEach(m=>cnt[m]=0);
-  cli.forEach(c=>{ const info=auditInfo(c,M); if(!info.tracked||info.doneM) return;
-    const first = (info.nextDue && info.nextDue>M) ? info.nextDue : M;   // vencidas/never caen en M
-    if(cnt[first]!==undefined) cnt[first]++; });
+  // calendario: desde el mes actual (o el arranque más temprano) hacia adelante
+  let calStart = mesActual();
+  cli.forEach(c=>{ if(auditTracked(c) && c.audit_prox<calStart) calStart=c.audit_prox; });
+  const meses=[]; for(let i=0;i<8;i++) meses.push(mesAdd(calStart,i));
+  const hoy = mesActual();
+  const mStats = meses.map(m=>{ let sched=0,hechas=0;
+    cliF.forEach(c=>{ if(scheduledIn(c,m)){ sched++; if(hechaEn(c.id,m)) hechas++; } });
+    return { m, sched, hechas, pend:sched-hechas }; });
+
+  // resumen del período visible + por frecuencia
+  const totSched=mStats.reduce((a,s)=>a+s.sched,0), totDone=mStats.reduce((a,s)=>a+s.hechas,0);
+  const porFreq={}; AUDIT_FREQS.forEach(f=>porFreq[f]=0);
+  cli.forEach(c=>{ if(auditTracked(c)) porFreq[c.audit_freq]++; });
+  const sinAgenda = cli.filter(c=>!auditTracked(c)).length;
 
   const banner = S.fbk ? `<div class="scope-banner">Auditorías de <b>${esc(S.fbk)}</b> · <a href="#" id="audit-scope-clear">ver todos</a></div>` : "";
   $("#panel").innerHTML = banner+`<div class="audit-wrap">
@@ -499,20 +492,27 @@ function renderAuditorias(){
       </div>
       <div class="audit-sum">
         <span class="s-pend"><b>${pend.length}</b> para hacer</span>
-        <span class="s-done"><b>${hechas.length}</b> hechas</span>
-        <span class="muted">${prox.length} próximas · ${sinAudit} sin auditoría</span>
+        <span class="s-done"><b>${done.length}</b> hechas</span>
+        <span class="muted">en ${mesLabel(M)}</span>
       </div>
     </div>
-    <div class="audit-planner">${meses.map(m=>`
-      <div class="audit-mon ${m===M?'active':''}" data-audit-mes="${m}">
-        <div class="mm">${mesLabel(m)}</div><div class="cc">${cnt[m]}</div></div>`).join("")}</div>
+
+    <div class="audit-planner">${mStats.map(s=>`
+      <div class="audit-mon ${s.m===M?'active':''} ${(s.m<hoy&&s.pend>0)?'atras':''}" data-audit-mes="${s.m}" title="${s.hechas}/${s.sched} hechas">
+        <div class="mm">${mesLabel(s.m)}</div><div class="cc">${s.pend}</div>
+        <div class="dd">${s.sched?`${s.hechas}/${s.sched}`:"—"}</div></div>`).join("")}</div>
+
+    <div class="audit-resumen">
+      <span><b>${totSched}</b> auditorías ${mesLabel(meses[0])}–${mesLabel(meses[meses.length-1])}</span>
+      <span style="color:var(--menta)"><b>${totDone}</b> hechas</span>
+      <span style="color:var(--amber)"><b>${totSched-totDone}</b> pendientes</span>
+      <span class="muted">·  ${AUDIT_FREQS.filter(f=>porFreq[f]).map(f=>`${f}: ${porFreq[f]}`).join(" · ")}${sinAgenda?` · sin agenda: ${sinAgenda}`:""}</span>
+    </div>
 
     <div class="chart-card wide"><h3>Para hacer en ${mesLabel(M)} <span class="muted">· ${pend.length}</span></h3>
       ${auditTable(pend,M)}</div>
-    <div class="chart-card wide"><h3>Hechas en ${mesLabel(M)} <span class="muted">· ${hechas.length}</span></h3>
-      ${auditTable(hechas,M)}</div>
-    <div class="chart-card wide"><h3>Próximas <span class="muted">· ${prox.length}</span></h3>
-      ${auditTable(prox,M)}</div>
+    <div class="chart-card wide"><h3>Hechas en ${mesLabel(M)} <span class="muted">· ${done.length}</span></h3>
+      ${auditTable(done,M)}</div>
   </div>`;
   $("#audit-prev")?.addEventListener("click",()=>{ S.auditMes=mesAdd(M,-1); renderAll(); });
   $("#audit-next")?.addEventListener("click",()=>{ S.auditMes=mesAdd(M,1); renderAll(); });
@@ -754,6 +754,29 @@ $("#panel").addEventListener("change", async (e)=>{
       const c=S.clientes.find(x=>x.id===cid); if(c) c.audit_freq=val;
       toast("Frecuencia guardada ✓");
       renderView();
+    }catch(ex){ toast(ex.message,true); }
+    finally{ el.closest("td")?.classList.remove("saving"); }
+    return;
+  }
+  if(el.classList.contains("audit-prox")){
+    const cid=Number(el.dataset.cid), val=el.value||null;   // 'YYYY-MM' o null
+    el.closest("td")?.classList.add("saving");
+    try{
+      await api("update_cliente",{ id:cid, patch:{ audit_prox:val } });
+      const c=S.clientes.find(x=>x.id===cid); if(c) c.audit_prox=val;
+      toast("Agenda actualizada ✓");
+      renderView();
+    }catch(ex){ toast(ex.message,true); }
+    finally{ el.closest("td")?.classList.remove("saving"); }
+    return;
+  }
+  if(el.classList.contains("audit-nota")){
+    const cid=Number(el.dataset.cid), val=el.value.trim();
+    el.closest("td")?.classList.add("saving");
+    try{
+      await api("update_cliente",{ id:cid, patch:{ audit_nota:val } });
+      const c=S.clientes.find(x=>x.id===cid); if(c) c.audit_nota=val;
+      toast("Nota guardada ✓");
     }catch(ex){ toast(ex.message,true); }
     finally{ el.closest("td")?.classList.remove("saving"); }
     return;

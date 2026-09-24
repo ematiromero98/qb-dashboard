@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
       }
 
       case 'update_cliente': {
-        const patch = clean(body.patch, new Set(['nombre','bookkeeper_default','activo','comentarios','prioridad','audit_freq']));
+        const patch = clean(body.patch, new Set(['nombre','bookkeeper_default','activo','comentarios','prioridad','audit_freq','audit_prox','audit_nota']));
         const { data, error } = await db.from('qb_clientes').update(patch).eq('id', body.id).select().single();
         if (error) throw error;
         return json({ ok: true, cliente: data });
