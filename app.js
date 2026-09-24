@@ -12,6 +12,14 @@ const BK_COLORS = ["#2ee6a6","#5aa9ff","#b98bff","#ffb23e","#ff86c8","#46d5e6","
 const PRIOS = ["Alta","Media","Baja","Sales Tax"];
 const PRIO_RANK = { Alta:0, Media:1, Baja:2, "Sales Tax":3 };
 const PRIO_COLOR = { "Alta":"#ff6b6b", "Media":"#ffb23e", "Baja":"#2ee6a6", "Sales Tax":"#b98bff" };
+// Auditoría contable: frecuencia y cada cuántos meses vence
+const AUDIT_FREQS = ["Mensual","Trimestral","Semestral","Anual","Ninguna"];
+const AUDIT_MESES = { "Mensual":1, "Trimestral":3, "Semestral":6, "Anual":12, "Ninguna":0 };
+const MES_NOMBRE = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+function mesActual(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
+function mesAdd(mes,n){ const [y,m]=mes.split("-").map(Number); const d=new Date(y,(m-1)+n,1);
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"); }
+function mesLabel(mes){ const [y,m]=mes.split("-").map(Number); return MES_NOMBRE[m-1]+" "+y; }
 const prioSlug = (p)=>String(p||"").replace(/\s+/g,"");   // "Sales Tax" -> "SalesTax" (clase CSS)
 const prioDe = (cid)=>(S.clientes.find(x=>x.id===cid)||{}).prioridad || "Media";
 function prioSelect(cid, cur){
@@ -29,7 +37,7 @@ function prioChips(counts){
 const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
 
-const S = { pin:"", periodos:[], periodo_id:null, clientes:[], filas:[], view:"todo",
+const S = { pin:"", periodos:[], periodo_id:null, clientes:[], filas:[], auditorias:[], auditMes:"", view:"todo",
             q:"", fbk:"", ftipo:"", festado:"", bookkeepers:[], timer:null, lastSig:"" };
 
 /* ---------------- API ---------------- */
@@ -66,6 +74,8 @@ $("#btn-salir").addEventListener("click", ()=>{ localStorage.removeItem("qb_pin"
 async function load(){
   const d=await api("bootstrap",{ periodo_id:S.periodo_id });
   S.periodos=d.periodos; S.periodo_id=d.periodo_id; S.clientes=d.clientes; S.filas=d.filas;
+  S.auditorias=d.auditorias||[];
+  if(!S.auditMes) S.auditMes=mesActual();
   const set=new Set();
   d.clientes.forEach(c=>c.bookkeeper_default&&set.add(c.bookkeeper_default));
   d.filas.forEach(f=>f.bookkeeper&&set.add(f.bookkeeper));
@@ -81,7 +91,7 @@ function scheduleRefresh(){
       const modalOpen=!$("#modal").classList.contains("hidden");
       if(!editing&&!modalOpen){
         const d=await api("bootstrap",{ periodo_id:S.periodo_id });
-        S.filas=d.filas; S.clientes=d.clientes;
+        S.filas=d.filas; S.clientes=d.clientes; S.auditorias=d.auditorias||[];
         if(sig()!==S.lastSig) renderAll();
       }
     }catch(e){}
@@ -104,6 +114,7 @@ function renderView(){
   else if(S.view==="bookkeeper") renderBookkeeper();
   else if(S.view==="empresa") renderEmpresa();
   else if(S.view==="prioridades") renderPrioridades();
+  else if(S.view==="auditorias") renderAuditorias();
   else if(S.view==="graficos") renderGraficos();
 }
 // scope global (bookkeeper + tipo): mueve KPIs y gráficos a la persona elegida
@@ -408,6 +419,108 @@ function printClientesPrioridad(){
   w.document.close(); w.focus(); setTimeout(()=>{ try{ w.print(); }catch(e){} }, 350);
 }
 
+/* ---------------- AUDITORÍAS CONTABLES ---------------- */
+function auditFreqSelect(c){
+  const cur=c.audit_freq||"";
+  return `<select class="audit-freq" data-cid="${c.id}">`+
+    `<option value="" ${cur===""?"selected":""}>—</option>`+
+    AUDIT_FREQS.map(f=>`<option ${f===cur?"selected":""}>${f}</option>`).join("")+`</select>`;
+}
+// info de auditoría de un cliente para el mes M
+function auditInfo(c, M){
+  const freq=c.audit_freq;
+  const tracked = !!freq && freq!=="Ninguna";
+  const hechas=S.auditorias.filter(a=>a.cliente_id===c.id && a.hecho).map(a=>a.mes).sort();
+  const ultima = hechas.length ? hechas[hechas.length-1] : null;
+  const doneM = S.auditorias.some(a=>a.cliente_id===c.id && a.mes===M && a.hecho);
+  let nextDue=null, estado="";
+  if(tracked){
+    nextDue = ultima ? mesAdd(ultima, AUDIT_MESES[freq]) : null;   // null = nunca => vence ya
+    if(doneM) estado="hecha";
+    else if(nextDue===null || nextDue<=M) estado="pendiente";
+    else estado="proxima";
+  }
+  return { freq, tracked, ultima, doneM, nextDue, estado };
+}
+function auditRow(c, M, info){
+  const p = PRIOS.includes(c.prioridad)?c.prioridad:"Media";
+  const overdue = info.nextDue && info.nextDue<M;
+  const tag = info.estado==="pendiente"
+      ? (overdue?`<span class="audit-tag over">vencida · ${mesLabel(info.nextDue)}</span>`:`<span class="audit-tag due">este mes</span>`)
+    : info.estado==="proxima" ? `<span class="muted">vence ${mesLabel(info.nextDue)}</span>` : "";
+  return `<tr>
+    <td>${esc(c.nombre)}</td>
+    <td>${esc(c.bookkeeper_default||"—")}</td>
+    <td><span class="prio-badge prio-${prioSlug(p)}">${esc(p)}</span></td>
+    <td>${auditFreqSelect(c)}</td>
+    <td class="muted">${info.ultima?mesLabel(info.ultima):"—"} ${tag}</td>
+    <td><input type="checkbox" class="audit-ck" data-cid="${c.id}" data-mes="${M}" ${info.doneM?"checked":""} title="Marcar auditoría hecha en ${mesLabel(M)}"></td>
+  </tr>`;
+}
+function auditTable(rows, M){
+  if(!rows.length) return `<p class="muted" style="padding:6px 2px">Nada acá.</p>`;
+  return `<table class="audit-table"><thead><tr>
+    <th>Empresa</th><th>Bookkeeper</th><th>Prioridad</th><th>Frecuencia</th><th>Última / estado</th><th>Hecha</th>
+    </tr></thead><tbody>${rows.map(r=>auditRow(r.c,M,r.info)).join("")}</tbody></table>`;
+}
+function renderAuditorias(){
+  const M = S.auditMes || mesActual();
+  let cli = S.clientes.filter(c=>c.activo!==false);
+  if(S.fbk) cli=cli.filter(c=>c.bookkeeper_default===S.fbk);
+  if(S.q){ const q=S.q.toLowerCase(); cli=cli.filter(c=>(c.nombre||"").toLowerCase().includes(q)); }
+
+  const pend=[], hechas=[], prox=[]; let sinAudit=0;
+  cli.forEach(c=>{ const info=auditInfo(c,M);
+    if(!info.tracked){ sinAudit++; return; }
+    const o={c,info};
+    if(info.estado==="hecha") hechas.push(o);
+    else if(info.estado==="pendiente") pend.push(o);
+    else prox.push(o);
+  });
+  const byPrio=(a,b)=>PRIO_RANK[a.c.prioridad||"Media"]-PRIO_RANK[b.c.prioridad||"Media"]||a.c.nombre.localeCompare(b.c.nombre);
+  pend.sort(byPrio); hechas.sort((a,b)=>a.c.nombre.localeCompare(b.c.nombre));
+  prox.sort((a,b)=>(a.info.nextDue||"").localeCompare(b.info.nextDue||"")||a.c.nombre.localeCompare(b.c.nombre));
+
+  // planner: próximos 6 meses (primer vencimiento por cliente)
+  const meses=[]; for(let i=0;i<6;i++) meses.push(mesAdd(M,i));
+  const cnt={}; meses.forEach(m=>cnt[m]=0);
+  cli.forEach(c=>{ const info=auditInfo(c,M); if(!info.tracked||info.doneM) return;
+    const first = (info.nextDue && info.nextDue>M) ? info.nextDue : M;   // vencidas/never caen en M
+    if(cnt[first]!==undefined) cnt[first]++; });
+
+  const banner = S.fbk ? `<div class="scope-banner">Auditorías de <b>${esc(S.fbk)}</b> · <a href="#" id="audit-scope-clear">ver todos</a></div>` : "";
+  $("#panel").innerHTML = banner+`<div class="audit-wrap">
+    <div class="audit-head">
+      <div class="audit-nav">
+        <button class="btn ghost" id="audit-prev" title="Mes anterior">◀</button>
+        <span class="audit-mes">${mesLabel(M)}</span>
+        <button class="btn ghost" id="audit-next" title="Mes siguiente">▶</button>
+        <button class="btn ghost" id="audit-hoy">Hoy</button>
+      </div>
+      <div class="audit-sum">
+        <span class="s-pend"><b>${pend.length}</b> para hacer</span>
+        <span class="s-done"><b>${hechas.length}</b> hechas</span>
+        <span class="muted">${prox.length} próximas · ${sinAudit} sin auditoría</span>
+      </div>
+    </div>
+    <div class="audit-planner">${meses.map(m=>`
+      <div class="audit-mon ${m===M?'active':''}" data-audit-mes="${m}">
+        <div class="mm">${mesLabel(m)}</div><div class="cc">${cnt[m]}</div></div>`).join("")}</div>
+
+    <div class="chart-card wide"><h3>Para hacer en ${mesLabel(M)} <span class="muted">· ${pend.length}</span></h3>
+      ${auditTable(pend,M)}</div>
+    <div class="chart-card wide"><h3>Hechas en ${mesLabel(M)} <span class="muted">· ${hechas.length}</span></h3>
+      ${auditTable(hechas,M)}</div>
+    <div class="chart-card wide"><h3>Próximas <span class="muted">· ${prox.length}</span></h3>
+      ${auditTable(prox,M)}</div>
+  </div>`;
+  $("#audit-prev")?.addEventListener("click",()=>{ S.auditMes=mesAdd(M,-1); renderAll(); });
+  $("#audit-next")?.addEventListener("click",()=>{ S.auditMes=mesAdd(M,1); renderAll(); });
+  $("#audit-hoy")?.addEventListener("click",()=>{ S.auditMes=mesActual(); renderAll(); });
+  $("#audit-scope-clear")?.addEventListener("click",(e)=>{ e.preventDefault(); S.fbk=""; renderAll(); });
+  $$(".audit-mon").forEach(el=>el.addEventListener("click",()=>{ S.auditMes=el.dataset.auditMes; renderAll(); }));
+}
+
 /* ---------------- DASHBOARD DE GRÁFICOS ---------------- */
 function donut(segs, size=150){
   const tot=segs.reduce((a,s)=>a+s.value,0)||1; const r=size/2, ir=r*0.62; let a0=-Math.PI/2; let paths="";
@@ -620,6 +733,31 @@ $("#btn-refresh").addEventListener("click", async ()=>{ await load(); toast("Act
 /* ---------------- COMENTARIOS por cliente ---------------- */
 $("#panel").addEventListener("change", async (e)=>{
   const el=e.target;
+  if(el.classList.contains("audit-ck")){
+    const cid=Number(el.dataset.cid), mes=el.dataset.mes, hecho=el.checked;
+    el.closest("td")?.classList.add("saving");
+    try{
+      await api("audit_toggle",{ cliente_id:cid, mes, hecho });
+      S.auditorias=S.auditorias.filter(a=>!(a.cliente_id===cid && a.mes===mes));
+      if(hecho) S.auditorias.push({ cliente_id:cid, mes, hecho:true, fecha:new Date().toISOString().slice(0,10) });
+      toast(hecho?"Auditoría marcada ✓":"Desmarcada");
+      renderView(); // recalcula vencimientos
+    }catch(ex){ toast(ex.message,true); el.checked=!hecho; }
+    finally{ el.closest("td")?.classList.remove("saving"); }
+    return;
+  }
+  if(el.classList.contains("audit-freq")){
+    const cid=Number(el.dataset.cid), val=el.value||null;
+    el.closest("td")?.classList.add("saving");
+    try{
+      await api("update_cliente",{ id:cid, patch:{ audit_freq:val } });
+      const c=S.clientes.find(x=>x.id===cid); if(c) c.audit_freq=val;
+      toast("Frecuencia guardada ✓");
+      renderView();
+    }catch(ex){ toast(ex.message,true); }
+    finally{ el.closest("td")?.classList.remove("saving"); }
+    return;
+  }
   if(el.classList.contains("cli-prio")){
     const cid=Number(el.dataset.cid), val=el.value;
     el.closest("td")?.classList.add("saving");
