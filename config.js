@@ -2,7 +2,7 @@
 // La anon key es segura de exponer: las tablas qb_ tienen RLS activado SIN políticas,
 // así que la anon key por sí sola NO puede leer nada. Todo el acceso a datos pasa por
 // la Edge Function 'qb-api', que valida el PIN y usa el service_role del lado servidor.
-// DECISIÓN DE AUDITORÍA (sep-2026): la auth por PIN (jefes2026) se dejó A PROPÓSITO.
+// DECISIÓN DE AUDITORÍA (sep-2026): la auth por PIN (el valor vive en la base, no en el repo) se dejó A PROPÓSITO.
 // Se evaluó migrar a Supabase Auth por persona (trazabilidad + rate-limit + caducidad)
 // y se decidió NO hacerlo por ahora. Riesgo aceptado y documentado.
 window.QB_CONFIG = {

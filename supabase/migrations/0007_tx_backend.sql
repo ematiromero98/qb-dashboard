@@ -15,8 +15,9 @@ create table if not exists public.tx_config (
   pin text not null
 );
 
+-- El PIN real se setea por SQL fuera del repo (no se versiona).
 insert into public.tx_config (id, pin)
-values (1, 'Chermisqui-2026')
+values (1, '<PIN>')
 on conflict (id) do nothing;
 
 -- RLS ON sin políticas => la anon key NO lee ni escribe nada.
