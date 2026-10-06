@@ -892,7 +892,7 @@ async function saveCuenta(){
 $("#btn-nuevo-periodo").addEventListener("click", ()=>{
   const now=new Date(), y=now.getFullYear(), m=String(now.getMonth()+1).padStart(2,"0");
   openModal("Nuevo mes",`
-    <p class="muted">El mes actual queda <b>guardado</b> tal cual está, y se abre uno nuevo arrastrando todas las cuentas activas en <b>Pendiente de Hacer</b>.</p>
+    <p class="muted">El mes actual queda <b>guardado</b> tal cual está, y se abre uno nuevo arrastrando todas las cuentas activas en <b>Pendiente de Hacer</b>, con las <b>notas</b> del mes anterior. Las cuentas que estaban Inactive y las de clientes dados de baja siguen como Inactive.</p>
     <div class="row2"><div><label>Etiqueta</label><input id="m-etq" value="${y}-${m}"></div>
       <div><label>Fecha (1° del mes)</label><input type="date" id="m-fec" value="${y}-${m}-01"></div></div>
     <div class="modal-actions"><button class="btn ghost" id="m-cancel">Cancelar</button><button class="btn primary" id="m-save">Crear mes</button></div>`);
