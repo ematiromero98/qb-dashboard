@@ -1,4 +1,4 @@
-import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { createClient } from './db.ts'; // cliente PostgREST local, sin dependencias (ver db.ts)
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
