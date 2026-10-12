@@ -53,7 +53,7 @@ Postgres (Supabase)  tablas qb_periodos / qb_clientes / qb_cuentas / qb_concilia
 
 - Front: `index.html` + `styles.css` + `app.js` + `config.js`.
 - Backend: `supabase/functions/qb-api/` (Deno) + `supabase/migrations/0001_qb_schema.sql`.
-- Proyecto Supabase: **EMPLOYEE-PRO** (`ffczbimnuodzcbgsdxbx`), tablas prefijadas `qb_`.
+- Proyecto Supabase: **ORDENES DE PAGO - BELGRANO** (`zpwccecovhjmeibxafkg`), schema `chermisqui` (tablas `qb_`/`tx_`). Hasta oct-2026 estaba en EMPLOYEE-PRO (`ffczbimnuodzcbgsdxbx`, dado de baja).
 
 ## Seguridad
 
@@ -75,7 +75,7 @@ Opción B — llamando a la función con el PIN actual (acción `set_pin`).
 - **Front**: es estático → GitHub Pages sirve `index.html`. Cada push a `main` actualiza el sitio.
 - **Backend**: desplegar la función con la CLI de Supabase:
   ```bash
-  supabase functions deploy qb-api --no-verify-jwt --project-ref ffczbimnuodzcbgsdxbx
+  supabase functions deploy qb-api --no-verify-jwt --project-ref zpwccecovhjmeibxafkg
   ```
 - **Migración**: aplicar `supabase/migrations/0001_qb_schema.sql` en el proyecto.
 

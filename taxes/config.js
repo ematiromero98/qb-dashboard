@@ -5,8 +5,8 @@
    las computadoras/celulares y se sincronizan solos cada pocos segundos.
    ============================================================ */
 window.QB_TX = {
-  URL: "https://ffczbimnuodzcbgsdxbx.supabase.co",
-  ANON: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZmY3piaW1udW9kemNiZ3NkeGJ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxMDk5OTIsImV4cCI6MjEwMTY4NTk5Mn0.askaC0kqNdzoxYhJhmzEKPOiW5n9QlbBrF5U1pqRlBE",
+  URL: "https://zpwccecovhjmeibxafkg.supabase.co",
+  ANON: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpwd2NjZWNvdmhqbWVpYnhhZmtnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4MjM5MTgsImV4cCI6MjA5NTM5OTkxOH0.E6H-a8b-Dze1ugp0KdKIh2SWwLNLb9Pe3BYyLngppC4",
   FN: "tx-api",
   KEY: "quarters_v1",
   REFRESH_MS: 8000,

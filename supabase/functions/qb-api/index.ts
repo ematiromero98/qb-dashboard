@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -11,6 +11,7 @@ const json = (b: unknown, s = 200) =>
 const db = createClient(
   Deno.env.get('SUPABASE_URL')!,
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+  { db: { schema: 'chermisqui' } }, // tablas en el schema 'chermisqui'
 );
 
 // ── Bloqueo por intentos fallidos de PIN (tabla pin_intentos) ──────────────
