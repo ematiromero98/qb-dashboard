@@ -88,6 +88,17 @@ const CONC_FIELDS = new Set([
   'doc_payroll','junior_input','auto_review','claude_review','senior_review',
   'analisis_payroll','analisis_pl','analisis_balance','analisis_ventas',
 ]);
+// Error 500 genérico: el detalle va solo al log de la función.
+const errInterno = (donde: string, e: unknown) => {
+  console.error(`qb-api ${donde}:`, e);
+  return json({ error: 'Error interno, probá de nuevo' }, 500);
+};
+const PIN_MIN = 8;
+const PIN_MAX = 64;
+const validarPinNuevo = (np: string): string | null =>
+  np.length < PIN_MIN ? `El PIN nuevo debe tener al menos ${PIN_MIN} caracteres`
+    : np.length > PIN_MAX ? 'PIN demasiado largo' : null;
+
 const clean = (patch: Record<string, unknown>, allowed: Set<string>) => {
   const o: Record<string, unknown> = {};
   for (const k of Object.keys(patch || {})) if (allowed.has(k)) o[k] = patch[k];
@@ -101,7 +112,9 @@ Deno.serve(async (req) => {
   const { pin, action } = body ?? {};
 
   const { data: cfg } = await db.from('qb_config').select('pin, pin_admin').eq('id', 1).single();
-  const isAdmin = typeof action === 'string' && action.startsWith('rrhh_');
+  // Acciones de jefes: el módulo rrhh_* y cambiar el PIN general (set_pin).
+  // Con el PIN general solo no se puede cambiar el PIN de todos.
+  const isAdmin = typeof action === 'string' && (action.startsWith('rrhh_') || action === 'set_pin');
   if (!cfg) return json({ error: 'PIN incorrecto' }, 401);
   // PIN general y PIN de jefes (rrhh_*) llevan contadores de bloqueo separados.
   const need = String((isAdmin ? cfg.pin_admin : cfg.pin) ?? '');
@@ -234,10 +247,13 @@ Deno.serve(async (req) => {
         return json({ ok: true, periodo: per });
       }
 
+      // Cambia el PIN GENERAL. Se autoriza con el PIN de jefes (ver isAdmin).
       case 'set_pin': {
         const np = String(body.new_pin ?? '').trim();
-        if (np.length < 4) return json({ error: 'PIN muy corto' }, 400);
-        await db.from('qb_config').update({ pin: np, updated_at: new Date().toISOString() }).eq('id', 1);
+        const malo = validarPinNuevo(np);
+        if (malo) return json({ error: malo }, 400);
+        const { error } = await db.from('qb_config').update({ pin: np, updated_at: new Date().toISOString() }).eq('id', 1);
+        if (error) return errInterno('set_pin', error);
         return json({ ok: true });
       }
 
@@ -328,8 +344,10 @@ Deno.serve(async (req) => {
 
       case 'rrhh_set_pin': {
         const np = String(body.new_pin ?? '').trim();
-        if (np.length < 4) return json({ error: 'PIN muy corto' }, 400);
-        await db.from('qb_config').update({ pin_admin: np }).eq('id', 1);
+        const malo = validarPinNuevo(np);
+        if (malo) return json({ error: malo }, 400);
+        const { error } = await db.from('qb_config').update({ pin_admin: np }).eq('id', 1);
+        if (error) return errInterno('rrhh_set_pin', error);
         return json({ ok: true });
       }
 
@@ -337,6 +355,6 @@ Deno.serve(async (req) => {
         return json({ error: 'accion desconocida' }, 400);
     }
   } catch (e) {
-    return json({ error: String(e?.message ?? e) }, 500);
+    return errInterno(String(action), e);
   }
 });

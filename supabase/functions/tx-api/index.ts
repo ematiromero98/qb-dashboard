@@ -81,6 +81,12 @@ async function checkPin(req: Request, funcion: string, enviado: string, esperado
   return json({ error: msgError, restantes: MAX_FALLOS - fallidos }, 401);
 }
 
+// Error 500 genérico: el detalle va solo al log de la función.
+const errInterno = (donde: string, e: unknown) => {
+  console.error(`tx-api ${donde}:`, e);
+  return json({ error: 'Error interno, probá de nuevo' }, 500);
+};
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   let body: any;
@@ -113,15 +119,19 @@ Deno.serve(async (req) => {
         const rev = Number(cur?.rev ?? 0) + 1;
         const { error } = await db.from('tx_kv')
           .upsert({ id: key, value: v, rev, updated_at: new Date().toISOString() });
-        if (error) return json({ error: error.message }, 500);
+        if (error) return errInterno('set', error);
         return json({ ok: true, rev });
       }
 
-      // Cambiar el PIN (opcional)
+      // Cambiar el PIN (opcional). tx-api tiene un único PIN (no hay PIN de
+      // jefes): se autoriza con el PIN ACTUAL, que ya se validó arriba con
+      // checkPin (y su bloqueo por intentos). El front no usa esta acción hoy.
       case 'set_pin': {
         const np = String(body.new_pin ?? '').trim();
-        if (np.length < 4) return json({ error: 'PIN muy corto' }, 400);
-        await db.from('tx_config').update({ pin: np }).eq('id', 1);
+        if (np.length < 8) return json({ error: 'El PIN nuevo debe tener al menos 8 caracteres' }, 400);
+        if (np.length > 64) return json({ error: 'PIN demasiado largo' }, 400);
+        const { error } = await db.from('tx_config').update({ pin: np }).eq('id', 1);
+        if (error) return errInterno('set_pin', error);
         return json({ ok: true });
       }
 
@@ -129,6 +139,6 @@ Deno.serve(async (req) => {
         return json({ error: 'acción desconocida' }, 400);
     }
   } catch (e) {
-    return json({ error: String(e) }, 500);
+    return errInterno(String(action), e);
   }
 });

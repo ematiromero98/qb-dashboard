@@ -906,13 +906,16 @@ $("#btn-nuevo-periodo").addEventListener("click", ()=>{
 
 $("#btn-pin").addEventListener("click", ()=>{
   openModal("Cambiar PIN",`
-    <label>Nuevo PIN (mín. 4 caracteres)</label><input id="m-pin" type="text" placeholder="nuevo PIN">
-    <p class="muted" style="margin-top:8px">Se aplica a todos. Avisales el nuevo PIN a los chicos.</p>
+    <label>PIN de jefes</label><input id="m-pin-admin" type="password" autocomplete="off" placeholder="PIN de jefes">
+    <label style="margin-top:8px">Nuevo PIN general (mín. 8 caracteres)</label><input id="m-pin" type="text" placeholder="nuevo PIN">
+    <p class="muted" style="margin-top:8px">Se aplica a todos. Para cambiarlo hace falta el PIN de jefes. Avisales el nuevo PIN a los chicos.</p>
     <div class="modal-actions"><button class="btn ghost" id="m-cancel">Cancelar</button><button class="btn primary" id="m-save">Cambiar</button></div>`);
   $("#m-cancel").addEventListener("click",closeModal);
   $("#m-save").addEventListener("click", async ()=>{
-    const np=$("#m-pin").value.trim(); if(np.length<4) return toast("PIN muy corto",true);
-    try{ await api("set_pin",{ new_pin:np }); S.pin=np;
+    const pa=$("#m-pin-admin").value.trim(); if(!pa) return toast("Ingresá el PIN de jefes",true);
+    const np=$("#m-pin").value.trim(); if(np.length<8) return toast("El PIN debe tener al menos 8 caracteres",true);
+    // set_pin se autoriza con el PIN de jefes (no con el general).
+    try{ await api("set_pin",{ pin:pa, new_pin:np }); S.pin=np;
       (localStorage.getItem("qb_pin")?localStorage:sessionStorage).setItem("qb_pin",np);
       closeModal(); toast("PIN cambiado ✓"); }
     catch(ex){ toast(ex.message,true); }
