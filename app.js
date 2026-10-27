@@ -115,6 +115,7 @@ function renderView(){
   else if(S.view==="empresa") renderEmpresa();
   else if(S.view==="prioridades") renderPrioridades();
   else if(S.view==="auditorias") renderAuditorias();
+  else if(S.view==="infopedida") renderInfoPedida();
   else if(S.view==="graficos") renderGraficos();
 }
 // scope global (bookkeeper + tipo): mueve KPIs y gráficos a la persona elegida
@@ -175,6 +176,7 @@ function renderTabs(){
     const v=t.dataset.view; t.classList.toggle("active", v===S.view);
     t.querySelector(".cnt")?.remove();
     if(VIEWS[v]){ const c=S.filas.filter(f=>f.estado===VIEWS[v]).length; if(c) t.insertAdjacentHTML("beforeend",` <span class="cnt">${c}</span>`); }
+    if(v==="infopedida"){ const c=S.filas.filter(f=>f.info_pedida).length; if(c) t.insertAdjacentHTML("beforeend",` <span class="cnt ip-cnt">${c}</span>`); }
   });
 }
 
@@ -202,12 +204,12 @@ function bkSelect(f){
 function renderGrid(){
   const head=`<tr>
     <th class="l">Cuenta</th><th>Tipo</th><th title="Cuenta manual (sin importar de QuickBooks)">Manual</th><th>Estado</th><th>Fecha</th><th class="l">Bookkeeper</th>
-    ${BOOLS.map(b=>`<th>${b[1]}</th>`).join("")}<th class="l">Notas</th></tr>`;
+    ${BOOLS.map(b=>`<th>${b[1]}</th>`).join("")}<th title="Tildar = se le pidió información al cliente. Destildar = respondido.">Info pedida</th><th class="l">Notas</th></tr>`;
   $("#grid thead").innerHTML=head;
   const f=filtered();
   const groups=new Map();
   f.forEach(x=>{ if(!groups.has(x.cliente_id)) groups.set(x.cliente_id,[]); groups.get(x.cliente_id).push(x); });
-  const ncols=6+BOOLS.length+1; let html="";
+  const ncols=6+BOOLS.length+2; let html="";
   const orden=[...groups.entries()].sort((a,b)=>
     PRIO_RANK[prioDe(a[0])]-PRIO_RANK[prioDe(b[0])] || a[1][0].cliente.localeCompare(b[1][0].cliente));
   for(const [cid,rows] of orden){
@@ -230,6 +232,7 @@ function renderGrid(){
         <td data-label="Fecha"><input type="date" class="fecha" data-id="${r.conc_id}" data-field="fecha_completado" value="${r.fecha_completado||""}"></td>
         <td class="l" data-label="Bookkeeper">${bkSelect(r)}</td>
         ${BOOLS.map(b=>`<td data-label="${b[1]}"><input type="checkbox" data-id="${r.conc_id}" data-field="${b[0]}" ${r[b[0]]?"checked":""}></td>`).join("")}
+        <td data-label="Info pedida" class="ip-cell">${infoPedidaCk(r)}</td>
         <td class="l notas-cell" data-label="Notas"><input type="text" class="notas" data-id="${r.conc_id}" data-field="notas" value="${esc(r.notas||"")}" placeholder="…"></td>
       </tr>`;
     }
@@ -520,6 +523,125 @@ function renderAuditorias(){
   $$(".audit-mon").forEach(el=>el.addEventListener("click",()=>{ S.auditMes=el.dataset.auditMes; renderAll(); }));
 }
 
+/* ---------------- INFORMACIÓN PEDIDA (seguimiento de pedidos a clientes) ---------------- */
+// Tildar "Info pedida" en una cuenta = se le pidió algo al cliente (por mail de Breanna).
+// Destildar = respondido: queda en "Respondidas" con la fecha. Los abiertos pasan al mes nuevo.
+function diasDesde(d){ if(!d) return null; return Math.max(0, Math.round((new Date(todayStr()+"T00:00:00")-new Date(d+"T00:00:00"))/86400000)); }
+function fechaCorta(d){ if(!d) return "—"; const p=String(d).split("-"); return p[2]+"/"+p[1]+"/"+p[0].slice(2); }
+function diasClase(n){ return n==null ? "" : n>7 ? "ip-late" : n>3 ? "ip-warn" : "ip-ok"; }
+function infoPedidaCk(r){
+  const tip = r.info_pedida ? `Pedida el ${fechaCorta(r.info_pedida_fecha)}${r.info_pedida_detalle?" · "+r.info_pedida_detalle:""}`
+    : (r.info_respondida_fecha ? `Respondida el ${fechaCorta(r.info_respondida_fecha)}` : "Marcar: se le pidió información al cliente");
+  const d = r.info_pedida ? diasDesde(r.info_pedida_fecha) : null;
+  return `<input type="checkbox" class="ip-ck" data-id="${r.conc_id}" data-field="info_pedida" ${r.info_pedida?"checked":""} title="${esc(tip)}">`+
+    (d!=null ? `<span class="ip-dias ${diasClase(d)}" title="${esc(tip)}">${d}d</span>` : "");
+}
+async function toggleInfoPedida(id, on, el){
+  const patch = on ? { info_pedida:true, info_pedida_fecha:todayStr(), info_respondida_fecha:null }
+                   : { info_pedida:false, info_respondida_fecha:todayStr() };
+  const td=el?.closest("td"); td?.classList.add("saving");
+  try{
+    await api("update_conc",{ id, patch });
+    const fila=S.filas.find(f=>f.conc_id===id);
+    if(fila){ Object.assign(fila, patch); fila.actualizado_at=new Date().toISOString(); }
+    toast(on ? "Marcada como pedida ✓" : "Respondida ✓");
+    renderTabs();
+    if(S.view==="infopedida") renderView();
+    else if(td && fila){ td.innerHTML=infoPedidaCk(fila); }
+  }catch(ex){ toast(ex.message,true); if(el) el.checked=!on; }
+  finally{ td?.classList.remove("saving"); S.lastSig=sig(); }
+}
+function ipFiltradas(pred){
+  let f=S.filas.filter(pred);
+  if(S.fbk) f=f.filter(x=>x.bookkeeper===S.fbk || (!x.bookkeeper && x.bookkeeper_default===S.fbk));
+  if(S.q){ const q=S.q.toLowerCase(); f=f.filter(x=>(x.cliente||"").toLowerCase().includes(q)||(x.cuenta||"").toLowerCase().includes(q)||(x.info_pedida_detalle||"").toLowerCase().includes(q)); }
+  return f;
+}
+function ipPorCliente(rows){
+  const m=new Map(); rows.forEach(r=>{ (m.get(r.cliente_id)||m.set(r.cliente_id,[]).get(r.cliente_id)).push(r); });
+  return [...m.values()];
+}
+function renderInfoPedida(){
+  const abiertas = ipFiltradas(x=>x.info_pedida);
+  const respondidas = ipFiltradas(x=>!x.info_pedida && x.info_respondida_fecha)
+    .sort((a,b)=>String(b.info_respondida_fecha).localeCompare(String(a.info_respondida_fecha)));
+  // clientes: el que espera hace más días primero
+  const grupos = ipPorCliente(abiertas).map(rows=>({ rows, max:Math.max(...rows.map(r=>diasDesde(r.info_pedida_fecha)??0)) }))
+    .sort((a,b)=>b.max-a.max || a.rows[0].cliente.localeCompare(b.rows[0].cliente));
+  const nLate = abiertas.filter(r=>(diasDesde(r.info_pedida_fecha)??0)>7).length;
+  const banner = S.fbk ? `<div class="scope-banner">Pedidos de <b>${esc(S.fbk)}</b> · <a href="#" id="ip-scope-clear">ver todos</a></div>` : "";
+
+  const cards = grupos.map(({rows,max})=>{
+    const c=rows[0]; const prio=prioDe(c.cliente_id);
+    rows.sort((a,b)=>String(a.info_pedida_fecha||"").localeCompare(String(b.info_pedida_fecha||""))||a.cuenta.localeCompare(b.cuenta));
+    return `<div class="ip-card">
+      <div class="ip-card-head">
+        <span class="cli-name">${esc(c.cliente)}</span>
+        <span class="prio-badge prio-${prioSlug(prio)}">${esc(prio)}</span>
+        <span class="cli-badge">${esc(c.bookkeeper_default||"—")}</span>
+        <span class="ip-dias ${diasClase(max)}" title="El pedido más viejo de este cliente">${max} día${max===1?"":"s"}</span>
+      </div>
+      <table class="ip-table"><thead><tr><th class="l">Cuenta</th><th>Pedida el</th><th>Esperando</th><th class="l">Qué se pidió / mail a Breanna</th><th></th></tr></thead><tbody>
+      ${rows.map(r=>{ const d=diasDesde(r.info_pedida_fecha); return `<tr>
+        <td class="l" data-label="Cuenta"><span class="cuenta">${esc(r.cuenta)}</span> <span class="tipo-tag ${r.tipo==='Credit Card'?'cc':'bank'}">${r.tipo==='Credit Card'?'CC':'Bank'}</span></td>
+        <td data-label="Pedida el"><input type="date" class="ip-fecha" data-id="${r.conc_id}" value="${esc(r.info_pedida_fecha||"")}"></td>
+        <td data-label="Esperando"><span class="ip-dias ${diasClase(d)}">${d==null?"—":d+" d"}</span></td>
+        <td class="l" data-label="Qué se pidió"><input type="text" class="ip-det" data-id="${r.conc_id}" value="${esc(r.info_pedida_detalle||"")}" placeholder="Ej: extractos de agosto, mail del 20/10…"></td>
+        <td><button class="btn ghost ip-resp" data-id="${r.conc_id}" title="El cliente respondió: sacarlo de pendientes">✓ Respondido</button></td>
+      </tr>`; }).join("")}
+      </tbody></table></div>`;
+  }).join("");
+
+  const resp = respondidas.length ? `<table class="ip-table ip-resp-table"><thead><tr><th class="l">Empresa</th><th class="l">Cuenta</th><th>Pedida el</th><th>Respondida el</th><th class="l">Qué se pidió</th><th></th></tr></thead><tbody>
+    ${respondidas.map(r=>`<tr>
+      <td class="l" data-label="Empresa">${esc(r.cliente)}</td><td class="l" data-label="Cuenta">${esc(r.cuenta)}</td>
+      <td data-label="Pedida el">${fechaCorta(r.info_pedida_fecha)}</td><td data-label="Respondida el">${fechaCorta(r.info_respondida_fecha)}</td>
+      <td class="l muted" data-label="Qué se pidió">${esc(r.info_pedida_detalle||"")}</td>
+      <td><button class="btn ghost ip-reabrir" data-id="${r.conc_id}" title="Volver a marcarla como pedida">Reabrir</button></td></tr>`).join("")}
+    </tbody></table>` : `<p class="muted" style="padding:6px 2px">Todavía no hay pedidos respondidos este mes.</p>`;
+
+  $("#panel").innerHTML = banner+`<div class="ip-wrap">
+    <div class="ip-head">
+      <div class="audit-sum">
+        <span class="s-pend"><b>${abiertas.length}</b> cuenta${abiertas.length===1?"":"s"} esperando respuesta</span>
+        <span><b>${grupos.length}</b> cliente${grupos.length===1?"":"s"}</span>
+        ${nLate?`<span class="ip-late-txt"><b>${nLate}</b> con más de 7 días</span>`:""}
+        <span class="s-done"><b>${respondidas.length}</b> respondida${respondidas.length===1?"":"s"}</span>
+      </div>
+      ${abiertas.length?`<button class="btn ghost" id="ip-copy" title="Copia la lista de pendientes agrupada por cliente, para pegar en un mail o chat">📋 Copiar lista para Breanna</button>`:""}
+    </div>
+    <p class="muted ip-help">Se marca desde la columna <b>Info pedida</b> de la grilla. Cuando el cliente responde, tocá <b>✓ Respondido</b>. Los pedidos que siguen abiertos pasan solos al mes siguiente.</p>
+    ${grupos.length?cards:`<div class="empty">No hay pedidos de información abiertos${S.fbk||S.q?" con este filtro":""}.</div>`}
+    <div class="chart-card wide"><h3>Respondidas en este mes <span class="muted">· ${respondidas.length}</span></h3>${resp}</div>
+  </div>`;
+  $("#ip-scope-clear")?.addEventListener("click",(e)=>{ e.preventDefault(); S.fbk=""; renderAll(); });
+  $("#ip-copy")?.addEventListener("click",()=>copiarListaBreanna(grupos));
+}
+function copiarListaBreanna(grupos){
+  const txt = "Información pendiente de clientes ("+fechaCorta(todayStr())+")\n\n"+grupos.map(({rows})=>{
+    const c=rows[0];
+    return c.cliente+"\n"+rows.map(r=>`  - ${r.cuenta}${r.info_pedida_detalle?": "+r.info_pedida_detalle:""} (pedido el ${fechaCorta(r.info_pedida_fecha)}, ${diasDesde(r.info_pedida_fecha)??0} días)`).join("\n");
+  }).join("\n\n");
+  const ok=()=>toast("Lista copiada ✓");
+  if(navigator.clipboard?.writeText) navigator.clipboard.writeText(txt).then(ok).catch(()=>fallbackCopy(txt));
+  else fallbackCopy(txt);
+}
+function fallbackCopy(txt){
+  openModal("Copiar lista",`<textarea id="ip-copy-txt" style="width:100%;min-height:260px">${esc(txt)}</textarea><p class="muted">Seleccioná el texto y copialo con Ctrl+C.</p>`);
+  $("#ip-copy-txt")?.select();
+}
+async function saveIpField(el, field){
+  const id=Number(el.dataset.id); const val=(el.value||"").trim()||null;
+  el.closest("td")?.classList.add("saving");
+  try{
+    await api("update_conc",{ id, patch:{ [field]:val } });
+    const fila=S.filas.find(f=>f.conc_id===id); if(fila){ fila[field]=val; fila.actualizado_at=new Date().toISOString(); }
+    toast("Guardado ✓");
+    if(field==="info_pedida_fecha") renderView();
+  }catch(ex){ toast(ex.message,true); }
+  finally{ el.closest("td")?.classList.remove("saving"); S.lastSig=sig(); }
+}
+
 /* ---------------- DASHBOARD DE GRÁFICOS ---------------- */
 function donut(segs, size=150){
   const tot=segs.reduce((a,s)=>a+s.value,0)||1; const r=size/2, ir=r*0.62; let a0=-Math.PI/2; let paths="";
@@ -685,6 +807,7 @@ async function onEdit(e){
   const el=e.target;
   if(el.dataset.cuenta && el.dataset.cfield) return onEditCuenta(el);
   const id=el.dataset.id, field=el.dataset.field; if(!id||!field) return;
+  if(field==="info_pedida") return toggleInfoPedida(Number(id), el.checked, el);
   let val = el.type==="checkbox" ? el.checked : (field==="fecha_completado" ? (el.value||null) : el.value);
   const td=el.closest("td"); td?.classList.add("saving");
   try{
@@ -732,6 +855,8 @@ $("#btn-refresh").addEventListener("click", async ()=>{ await load(); toast("Act
 /* ---------------- COMENTARIOS por cliente ---------------- */
 $("#panel").addEventListener("change", async (e)=>{
   const el=e.target;
+  if(el.classList.contains("ip-det")) return saveIpField(el,"info_pedida_detalle");
+  if(el.classList.contains("ip-fecha")) return saveIpField(el,"info_pedida_fecha");
   if(el.classList.contains("audit-ck")){
     const cid=Number(el.dataset.cid), mes=el.dataset.mes, hecho=el.checked;
     const c=S.clientes.find(x=>x.id===cid);
@@ -816,6 +941,8 @@ $("#panel").addEventListener("change", async (e)=>{
 
 /* ---------------- DRILL-DOWN desde los gráficos ---------------- */
 $("#panel").addEventListener("click",(e)=>{
+  const ipBtn=e.target.closest(".ip-resp,.ip-reabrir");
+  if(ipBtn){ toggleInfoPedida(Number(ipBtn.dataset.id), ipBtn.classList.contains("ip-reabrir"), null); return; }
   const bkRow=e.target.closest("[data-drill-bk]");
   if(bkRow){ S.fbk=bkRow.dataset.drillBk; nav("empresa"); toast(`Filtrado: ${bkRow.dataset.drillBk}`); return; }
   const el=e.target.closest("[data-drill]"); if(!el) return;
@@ -925,8 +1052,8 @@ $("#btn-pin").addEventListener("click", ()=>{
 /* ---------------- EXPORT CSV ---------------- */
 $("#btn-export").addEventListener("click", ()=>{
   const f=(["todo","pendientes","acceso","escalar","falta","nueva"].includes(S.view))?filtered():S.filas;
-  const cols=["cliente","prioridad","cuenta","tipo","manual","estado","fecha_completado","bookkeeper",...BOOLS.map(b=>b[0]),"notas"];
-  const head=["Cliente","Prioridad","Cuenta","Tipo","Manual","Estado","Fecha","Bookkeeper",...BOOLS.map(b=>b[1]),"Notas"];
+  const cols=["cliente","prioridad","cuenta","tipo","manual","estado","fecha_completado","bookkeeper",...BOOLS.map(b=>b[0]),"info_pedida","info_pedida_fecha","info_pedida_detalle","info_respondida_fecha","notas"];
+  const head=["Cliente","Prioridad","Cuenta","Tipo","Manual","Estado","Fecha","Bookkeeper",...BOOLS.map(b=>b[1]),"Info pedida","Pedida el","Qué se pidió","Respondida el","Notas"];
   const csv=[head.join(",")].concat(f.map(r=>cols.map(c=>{
     let v=r[c]; if(typeof v==="boolean") v=v?"SI":""; v=v==null?"":String(v);
     return `"${v.replace(/"/g,'""')}"`; }).join(","))).join("\r\n");

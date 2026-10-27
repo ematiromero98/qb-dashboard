@@ -84,6 +84,7 @@ async function checkPin(req: Request, funcion: string, enviado: string, esperado
 const CONC_FIELDS = new Set([
   'estado','fecha_completado','bookkeeper',
   'conciliado','revisado','memos_checks','notas',
+  'info_pedida','info_pedida_fecha','info_pedida_detalle','info_respondida_fecha',
   // legacy (se mantienen para no perder datos históricos):
   'doc_payroll','junior_input','auto_review','claude_review','senior_review',
   'analisis_payroll','analisis_pl','analisis_balance','analisis_ventas',
@@ -218,16 +219,18 @@ Deno.serve(async (req) => {
           (cls ?? []).forEach((c: any) => { bkOf[c.id] = c.bookkeeper_default; cliActivo[c.id] = c.activo !== false; });
 
           // Mes anterior (el último creado antes de este): de ahí se arrastran
-          // las notas y las cuentas que estaban Inactive.
-          const prevOf: Record<number, { notas: string | null; estado: string }> = {};
+          // las notas, las cuentas que estaban Inactive y los pedidos de
+          // información que siguen abiertos (sin responder).
+          const prevOf: Record<number, any> = {};
           const { data: prev } = await db.from('qb_periodos').select('id')
             .lt('id', per.id).order('id', { ascending: false }).limit(1).maybeSingle();
           if (prev) {
             for (let from = 0; ; from += 1000) {
-              const { data: pc, error: e2 } = await db.from('qb_conciliaciones').select('cuenta_id, notas, estado')
+              const { data: pc, error: e2 } = await db.from('qb_conciliaciones')
+                .select('cuenta_id, notas, estado, info_pedida, info_pedida_fecha, info_pedida_detalle')
                 .eq('periodo_id', prev.id).order('id').range(from, from + 999);
               if (e2) throw e2;
-              (pc ?? []).forEach((r: any) => (prevOf[r.cuenta_id] = { notas: r.notas, estado: r.estado }));
+              (pc ?? []).forEach((r: any) => (prevOf[r.cuenta_id] = r));
               if (!pc || pc.length < 1000) break;
             }
           }
@@ -235,9 +238,13 @@ Deno.serve(async (req) => {
           const rows = cuentas.map((cu: any) => {
             const p = prevOf[cu.id];
             const inactiva = !cliActivo[cu.cliente_id] || p?.estado === 'Inactive';
+            const pedida = !inactiva && p?.info_pedida === true;
             return {
               periodo_id: per.id, cuenta_id: cu.id, estado: inactiva ? 'Inactive' : 'Pendiente de Hacer',
               bookkeeper: bkOf[cu.cliente_id] ?? null, notas: p?.notas || null,
+              info_pedida: pedida,
+              info_pedida_fecha: pedida ? p.info_pedida_fecha : null,
+              info_pedida_detalle: pedida ? p.info_pedida_detalle : null,
             };
           });
           for (let i = 0; i < rows.length; i += 500) {
