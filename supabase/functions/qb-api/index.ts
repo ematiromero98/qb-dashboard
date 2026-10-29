@@ -131,7 +131,7 @@ const RUN_HECHA = ['Enviada a Dennis', 'Hecho', 'Cerrada'];
 
 const encPath = (p: string) => p.split('/').map(encodeURIComponent).join('/');
 const nombreSeguro = (n: string) =>
-  String(n || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w.\- ]+/g, '')
+  String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w.\- ]+/g, '')
     .trim().replace(/\s+/g, '_').slice(-120) || 'archivo';
 
 async function storage(method: string, path: string, body?: unknown) {
@@ -309,6 +309,16 @@ Deno.serve(async (req) => {
       // Las usa la web y también el skill de auditoría de Claude Code.
       case 'aud_login':
         return json({ ok: true });
+
+      // Cambia el PIN de expedientes. Se autoriza con el PIN de expedientes actual (ver isAud).
+      case 'aud_set_pin': {
+        const np = String(body.new_pin ?? '').trim();
+        const malo = validarPinNuevo(np);
+        if (malo) return json({ error: malo }, 400);
+        const { error } = await db.from('qb_config').update({ pin_aud: np, updated_at: new Date().toISOString() }).eq('id', 1);
+        if (error) return errInterno('aud_set_pin', error);
+        return json({ ok: true });
+      }
 
       // Para la lista de clientes: todas las auditorías (cabecera) y los
       // hallazgos abiertos (incluye los Repetidos).
