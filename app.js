@@ -442,7 +442,7 @@ function auditRow(c, M){
   const p = PRIOS.includes(c.prioridad)?c.prioridad:"Media";
   const done = hechaEn(c.id, M);
   return `<tr class="${done?'audit-done':''}">
-    <td>${esc(c.nombre)}</td>
+    <td><a href="#" class="aud-open" data-cid="${c.id}" title="Ver expediente de auditoría">${esc(c.nombre)}</a></td>
     <td>${esc(c.bookkeeper_default||"—")}</td>
     <td><span class="prio-badge prio-${prioSlug(p)}">${esc(p)}</span></td>
     <td>${auditFreqSelect(c)}</td>
@@ -491,6 +491,7 @@ function renderAuditorias(){
         <span class="audit-mes">${mesLabel(M)}</span>
         <button class="btn ghost" id="audit-next" title="Mes siguiente">▶</button>
         <button class="btn ghost" id="audit-hoy">Hoy</button>
+        <button class="btn ghost" id="audit-exp" title="Historial, documentación, hallazgos, memoria y notas por cliente (PIN de jefes)">📁 Expedientes</button>
       </div>
       <div class="audit-sum">
         <span class="s-pend"><b>${pend.length}</b> para hacer</span>

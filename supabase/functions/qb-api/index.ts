@@ -106,6 +106,43 @@ const clean = (patch: Record<string, unknown>, allowed: Set<string>) => {
   return o;
 };
 
+// ── Expedientes de auditoría ───────────────────────────────────────────────
+// Los archivos van al bucket privado 'qb-auditorias' y solo se entra con URLs
+// firmadas que da esta función (subida y descarga, vencen solas).
+const SB_URL = Deno.env.get('SUPABASE_URL')!.replace(/\/$/, '');
+const SB_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const AUD_BUCKET = 'qb-auditorias';
+const AUD_TIPOS = ['Transaction Detail', 'Profit and Loss', 'Balance Sheet', 'Informe', 'Papel de trabajo', 'Otro'];
+const RUN_FIELDS = new Set(['periodo_desde','periodo_hasta','fecha','estado','semaforo','resumen','conclusiones','metricas','skill_version','auditor']);
+const HALL_FIELDS = new Set(['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado']);
+const HALL_INS = ['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado'];
+const MEM_FIELDS = new Set(['tema','contenido','estado']);
+
+const encPath = (p: string) => p.split('/').map(encodeURIComponent).join('/');
+const nombreSeguro = (n: string) =>
+  String(n || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w.\- ]+/g, '')
+    .trim().replace(/\s+/g, '_').slice(-120) || 'archivo';
+
+async function storage(method: string, path: string, body?: unknown) {
+  const r = await fetch(`${SB_URL}/storage/v1/${path}`, {
+    method,
+    headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const d = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(`storage ${r.status}: ${JSON.stringify(d)}`);
+  return d;
+}
+
+// Una auditoría en Final queda marcada como hecha en la agenda (qb_auditorias),
+// en el mes de su fecha.
+async function marcarAgenda(run: any) {
+  if (run?.estado !== 'Final' || !run.fecha) return;
+  await db.from('qb_auditorias').upsert(
+    { cliente_id: run.cliente_id, mes: String(run.fecha).slice(0, 7), hecho: true, fecha: run.fecha },
+    { onConflict: 'cliente_id,mes' });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   let body: any;
@@ -113,9 +150,10 @@ Deno.serve(async (req) => {
   const { pin, action } = body ?? {};
 
   const { data: cfg } = await db.from('qb_config').select('pin, pin_admin').eq('id', 1).single();
-  // Acciones de jefes: el módulo rrhh_* y cambiar el PIN general (set_pin).
-  // Con el PIN general solo no se puede cambiar el PIN de todos.
-  const isAdmin = typeof action === 'string' && (action.startsWith('rrhh_') || action === 'set_pin');
+  // Acciones de jefes: el módulo rrhh_*, los expedientes de auditoría (aud_*)
+  // y cambiar el PIN general (set_pin). Con el PIN general solo no se puede
+  // cambiar el PIN de todos.
+  const isAdmin = typeof action === 'string' && (action.startsWith('rrhh_') || action.startsWith('aud_') || action === 'set_pin');
   if (!cfg) return json({ error: 'PIN incorrecto' }, 401);
   // PIN general y PIN de jefes (rrhh_*) llevan contadores de bloqueo separados.
   const need = String((isAdmin ? cfg.pin_admin : cfg.pin) ?? '');
@@ -252,6 +290,195 @@ Deno.serve(async (req) => {
           }
         }
         return json({ ok: true, periodo: per });
+      }
+
+      // ============ EXPEDIENTES DE AUDITORÍA (jefes) ============
+      // Las usa la web y también el skill de auditoría de Claude Code.
+      case 'aud_login':
+        return json({ ok: true });
+
+      // Para la lista de clientes: todas las auditorías (cabecera) y los
+      // hallazgos abiertos.
+      case 'aud_resumen': {
+        const [runs, hall] = await Promise.all([
+          db.from('qb_aud_runs').select('id, cliente_id, fecha, periodo_desde, periodo_hasta, estado, semaforo')
+            .order('fecha', { ascending: false }),
+          db.from('qb_aud_hallazgos').select('cliente_id, severidad').eq('estado', 'Abierto'),
+        ]);
+        if (runs.error) throw runs.error;
+        if (hall.error) throw hall.error;
+        return json({ runs: runs.data ?? [], abiertos: hall.data ?? [] });
+      }
+
+      // Expediente completo de un cliente. Es también el contexto que lee el
+      // skill antes de empezar una auditoría.
+      case 'aud_cliente': {
+        const cid = Number(body.cliente_id);
+        if (!cid) return json({ error: 'falta cliente_id' }, 400);
+        const [runs, archivos, hallazgos, memoria, notas] = await Promise.all([
+          db.from('qb_aud_runs').select('*').eq('cliente_id', cid).order('fecha', { ascending: false }).order('id', { ascending: false }),
+          db.from('qb_aud_archivos').select('*').eq('cliente_id', cid).order('id'),
+          db.from('qb_aud_hallazgos').select('*').eq('cliente_id', cid).order('id'),
+          db.from('qb_aud_memoria').select('*').eq('cliente_id', cid).order('tema').order('id'),
+          db.from('qb_aud_notas').select('*').eq('cliente_id', cid).order('fecha', { ascending: false }).order('id', { ascending: false }),
+        ]);
+        for (const r of [runs, archivos, hallazgos, memoria, notas]) if (r.error) throw r.error;
+        return json({ runs: runs.data, archivos: archivos.data, hallazgos: hallazgos.data, memoria: memoria.data, notas: notas.data });
+      }
+
+      // Alta (sin id) o edición de una auditoría. Opcionales, para que el
+      // skill cargue todo de una vez: `hallazgos` (lista nueva), `memoria`
+      // (propuestas para la memoria del cliente) y `resueltos` (ids de
+      // hallazgos anteriores que esta auditoría verificó corregidos).
+      case 'aud_run_save': {
+        const hs = Array.isArray(body.hallazgos) ? body.hallazgos : [];
+        const ms = Array.isArray(body.memoria) ? body.memoria : [];
+        if (hs.some((h: any) => !String(h?.titulo ?? '').trim())) return json({ error: 'hay hallazgos sin título' }, 400);
+        if (ms.some((m: any) => !String(m?.contenido ?? '').trim())) return json({ error: 'hay memoria sin contenido' }, 400);
+        const patch = clean(body.run ?? {}, RUN_FIELDS);
+        let run: any;
+        if (body.id) {
+          const { data, error } = await db.from('qb_aud_runs')
+            .update({ ...patch, actualizado_at: new Date().toISOString() }).eq('id', body.id).select().single();
+          if (error) throw error;
+          run = data;
+        } else {
+          const cliente_id = Number(body.run?.cliente_id);
+          if (!cliente_id) return json({ error: 'falta cliente_id' }, 400);
+          const { data, error } = await db.from('qb_aud_runs').insert({ ...patch, cliente_id }).select().single();
+          if (error) throw error;
+          run = data;
+        }
+        if (hs.length) {
+          const rows = hs.map((h: any) => {
+            const o: Record<string, unknown> = { run_id: run.id, cliente_id: run.cliente_id };
+            for (const k of HALL_INS) o[k] = h?.[k] ?? null;
+            o.severidad = o.severidad || 'Media';
+            o.estado = o.estado || 'Abierto';
+            return o;
+          });
+          const { error } = await db.from('qb_aud_hallazgos').insert(rows);
+          if (error) throw error;
+        }
+        if (ms.length) {
+          const rows = ms.map((m: any) => ({
+            cliente_id: run.cliente_id, tema: m?.tema || 'General', contenido: m.contenido,
+            estado: m?.estado || 'Propuesta', origen_run_id: run.id,
+          }));
+          const { error } = await db.from('qb_aud_memoria').insert(rows);
+          if (error) throw error;
+        }
+        for (const hid of Array.isArray(body.resueltos) ? body.resueltos : []) {
+          await db.from('qb_aud_hallazgos')
+            .update({ estado: 'Resuelto', resuelto_fecha: run.fecha, resuelto_run_id: run.id })
+            .eq('id', hid).eq('cliente_id', run.cliente_id);
+        }
+        await marcarAgenda(run);
+        return json({ ok: true, run });
+      }
+
+      // Borra una auditoría con sus archivos (bucket) y hallazgos.
+      case 'aud_run_del': {
+        const { data: arch } = await db.from('qb_aud_archivos').select('storage_path').eq('run_id', body.id);
+        const paths = (arch ?? []).map((a: any) => a.storage_path);
+        if (paths.length) await storage('DELETE', `object/${AUD_BUCKET}`, { prefixes: paths });
+        const { error } = await db.from('qb_aud_runs').delete().eq('id', body.id);
+        if (error) throw error;
+        return json({ ok: true });
+      }
+
+      case 'aud_hallazgo_save': {
+        const patch: Record<string, unknown> = clean(body.patch, HALL_FIELDS);
+        if (!body.id || !Object.keys(patch).length) return json({ error: 'nada para actualizar' }, 400);
+        if (patch.estado === 'Abierto') { patch.resuelto_fecha = null; patch.resuelto_run_id = null; }
+        else if (patch.estado) patch.resuelto_fecha = body.patch.resuelto_fecha || new Date().toISOString().slice(0, 10);
+        const { data, error } = await db.from('qb_aud_hallazgos').update(patch).eq('id', body.id).select().single();
+        if (error) throw error;
+        return json({ ok: true, hallazgo: data });
+      }
+
+      case 'aud_memoria_save': {
+        const patch = clean(body.patch ?? {}, MEM_FIELDS);
+        if (body.id) {
+          const { data, error } = await db.from('qb_aud_memoria')
+            .update({ ...patch, actualizado_at: new Date().toISOString() }).eq('id', body.id).select().single();
+          if (error) throw error;
+          return json({ ok: true, memoria: data });
+        }
+        const contenido = String(patch.contenido ?? '').trim();
+        if (!body.cliente_id || !contenido) return json({ error: 'faltan datos' }, 400);
+        const { data, error } = await db.from('qb_aud_memoria').insert({
+          cliente_id: body.cliente_id, tema: patch.tema || 'General', contenido, estado: patch.estado || 'Vigente',
+        }).select().single();
+        if (error) throw error;
+        return json({ ok: true, memoria: data });
+      }
+
+      case 'aud_memoria_del': {
+        await db.from('qb_aud_memoria').delete().eq('id', body.id);
+        return json({ ok: true });
+      }
+
+      case 'aud_nota_add': {
+        const texto = String(body.texto ?? '').trim();
+        if (!body.cliente_id || !texto) return json({ error: 'faltan datos' }, 400);
+        const { data, error } = await db.from('qb_aud_notas').insert({
+          cliente_id: body.cliente_id, texto, run_id: body.run_id ?? null, autor: body.autor ?? null,
+          fecha: body.fecha ?? new Date().toISOString().slice(0, 10),
+        }).select().single();
+        if (error) throw error;
+        return json({ ok: true, nota: data });
+      }
+
+      case 'aud_nota_del': {
+        await db.from('qb_aud_notas').delete().eq('id', body.id);
+        return json({ ok: true });
+      }
+
+      // Subida en 2 pasos: 1) aud_upload_url da una URL firmada (PUT del
+      // archivo directo al bucket); 2) aud_archivo_add lo registra.
+      case 'aud_upload_url': {
+        const rol = String(body.rol ?? '');
+        if (!['input', 'output'].includes(rol)) return json({ error: 'rol inválido' }, 400);
+        const { data: run } = await db.from('qb_aud_runs').select('id, cliente_id').eq('id', body.run_id).maybeSingle();
+        if (!run) return json({ error: 'auditoría inexistente' }, 404);
+        const path = `${run.cliente_id}/${run.id}/${rol}/${Date.now()}-${nombreSeguro(body.nombre)}`;
+        const d = await storage('POST', `object/upload/sign/${AUD_BUCKET}/${encPath(path)}`);
+        return json({ ok: true, path, url: `${SB_URL}/storage/v1${d.url}` });
+      }
+
+      case 'aud_archivo_add': {
+        const rol = String(body.rol ?? '');
+        const { data: run } = await db.from('qb_aud_runs').select('id, cliente_id').eq('id', body.run_id).maybeSingle();
+        if (!run) return json({ error: 'auditoría inexistente' }, 404);
+        const path = String(body.path ?? '');
+        if (!['input', 'output'].includes(rol) || !path.startsWith(`${run.cliente_id}/${run.id}/${rol}/`)) {
+          return json({ error: 'ruta inválida' }, 400);
+        }
+        const { data, error } = await db.from('qb_aud_archivos').insert({
+          run_id: run.id, cliente_id: run.cliente_id, rol,
+          tipo: AUD_TIPOS.includes(body.tipo) ? body.tipo : 'Otro',
+          nombre: String(body.nombre ?? '').trim() || path.split('/').pop(),
+          storage_path: path, bytes: Number(body.bytes) || null, mime: body.mime ?? null,
+        }).select().single();
+        if (error) throw error;
+        return json({ ok: true, archivo: data });
+      }
+
+      // URL de descarga firmada, válida 5 minutos.
+      case 'aud_download_url': {
+        const { data: a } = await db.from('qb_aud_archivos').select('storage_path, nombre').eq('id', body.id).maybeSingle();
+        if (!a) return json({ error: 'archivo inexistente' }, 404);
+        const d = await storage('POST', `object/sign/${AUD_BUCKET}/${encPath(a.storage_path)}`, { expiresIn: 300 });
+        return json({ ok: true, url: `${SB_URL}/storage/v1${d.signedURL}&download=${encodeURIComponent(a.nombre)}` });
+      }
+
+      case 'aud_archivo_del': {
+        const { data: a } = await db.from('qb_aud_archivos').select('storage_path').eq('id', body.id).maybeSingle();
+        if (!a) return json({ ok: true });
+        await storage('DELETE', `object/${AUD_BUCKET}`, { prefixes: [a.storage_path] });
+        await db.from('qb_aud_archivos').delete().eq('id', body.id);
+        return json({ ok: true });
       }
 
       // Cambia el PIN GENERAL. Se autoriza con el PIN de jefes (ver isAdmin).
