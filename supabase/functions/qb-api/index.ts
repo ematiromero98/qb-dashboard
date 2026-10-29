@@ -112,11 +112,22 @@ const clean = (patch: Record<string, unknown>, allowed: Set<string>) => {
 const SB_URL = Deno.env.get('SUPABASE_URL')!.replace(/\/$/, '');
 const SB_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const AUD_BUCKET = 'qb-auditorias';
-const AUD_TIPOS = ['Transaction Detail', 'Profit and Loss', 'Balance Sheet', 'Informe', 'Papel de trabajo', 'Otro'];
-const RUN_FIELDS = new Set(['periodo_desde','periodo_hasta','fecha','estado','semaforo','resumen','conclusiones','metricas','skill_version','auditor']);
-const HALL_FIELDS = new Set(['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado']);
-const HALL_INS = ['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado'];
-const MEM_FIELDS = new Set(['tema','contenido','estado']);
+const AUD_TIPOS = [
+  // entrada
+  'Transaction Detail', 'Profit and Loss', 'Balance Sheet', 'Extracto bancario', 'Tarjeta', 'Cash Analysis', 'Reporte de nómina',
+  // salida
+  'Reporte resumido', 'Reporte detallado', 'Reporte financiero', 'Mail al cliente', 'Informe', 'Papel de trabajo', 'Otro',
+];
+const RUN_FIELDS = new Set(['tipo','periodo_desde','periodo_hasta','fecha','estado','semaforo','resumen','conclusiones','metricas','skill_version','auditor','reporte_dennis','mail_cliente']);
+const HALL_FIELDS = new Set(['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado','destino','en_resumen']);
+const HALL_INS = ['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado','destino','en_resumen'];
+const HALL_ABIERTOS = ['Abierto', 'Repetido'];
+const MEM_FIELDS = new Set(['tema','contenido','estado','origen','control']);
+// Resultado de cada control del catálogo (qb_aud_controles).
+const CTRL_INS = ['codigo','modulo','control','paso_dennis','criterio','estado','detalle','fuente'];
+const CTRL_FIELDS = new Set(['estado','detalle','fuente']);
+// Estados de la auditoría que cuentan como hecha en la agenda.
+const RUN_HECHA = ['Enviada a Dennis', 'Hecho', 'Cerrada'];
 
 const encPath = (p: string) => p.split('/').map(encodeURIComponent).join('/');
 const nombreSeguro = (n: string) =>
@@ -134,10 +145,10 @@ async function storage(method: string, path: string, body?: unknown) {
   return d;
 }
 
-// Una auditoría en Final queda marcada como hecha en la agenda (qb_auditorias),
-// en el mes de su fecha.
+// Una auditoría enviada a Dennis (o más adelante) queda marcada como hecha en
+// la agenda (qb_auditorias), en el mes de su fecha.
 async function marcarAgenda(run: any) {
-  if (run?.estado !== 'Final' || !run.fecha) return;
+  if (!RUN_HECHA.includes(run?.estado) || !run.fecha) return;
   await db.from('qb_auditorias').upsert(
     { cliente_id: run.cliente_id, mes: String(run.fecha).slice(0, 7), hecho: true, fecha: run.fecha },
     { onConflict: 'cliente_id,mes' });
@@ -300,12 +311,12 @@ Deno.serve(async (req) => {
         return json({ ok: true });
 
       // Para la lista de clientes: todas las auditorías (cabecera) y los
-      // hallazgos abiertos.
+      // hallazgos abiertos (incluye los Repetidos).
       case 'aud_resumen': {
         const [runs, hall] = await Promise.all([
           db.from('qb_aud_runs').select('id, cliente_id, fecha, periodo_desde, periodo_hasta, estado, semaforo')
             .order('fecha', { ascending: false }),
-          db.from('qb_aud_hallazgos').select('cliente_id, severidad').eq('estado', 'Abierto'),
+          db.from('qb_aud_hallazgos').select('cliente_id, severidad').in('estado', HALL_ABIERTOS),
         ]);
         if (runs.error) throw runs.error;
         if (hall.error) throw hall.error;
@@ -317,26 +328,32 @@ Deno.serve(async (req) => {
       case 'aud_cliente': {
         const cid = Number(body.cliente_id);
         if (!cid) return json({ error: 'falta cliente_id' }, 400);
-        const [runs, archivos, hallazgos, memoria, notas] = await Promise.all([
+        const [runs, archivos, hallazgos, memoria, notas, controles] = await Promise.all([
           db.from('qb_aud_runs').select('*').eq('cliente_id', cid).order('fecha', { ascending: false }).order('id', { ascending: false }),
           db.from('qb_aud_archivos').select('*').eq('cliente_id', cid).order('id'),
           db.from('qb_aud_hallazgos').select('*').eq('cliente_id', cid).order('id'),
           db.from('qb_aud_memoria').select('*').eq('cliente_id', cid).order('tema').order('id'),
           db.from('qb_aud_notas').select('*').eq('cliente_id', cid).order('fecha', { ascending: false }).order('id', { ascending: false }),
+          db.from('qb_aud_controles').select('*').eq('cliente_id', cid).order('codigo'),
         ]);
-        for (const r of [runs, archivos, hallazgos, memoria, notas]) if (r.error) throw r.error;
-        return json({ runs: runs.data, archivos: archivos.data, hallazgos: hallazgos.data, memoria: memoria.data, notas: notas.data });
+        for (const r of [runs, archivos, hallazgos, memoria, notas, controles]) if (r.error) throw r.error;
+        return json({ runs: runs.data, archivos: archivos.data, hallazgos: hallazgos.data, memoria: memoria.data, notas: notas.data, controles: controles.data });
       }
 
       // Alta (sin id) o edición de una auditoría. Opcionales, para que el
-      // skill cargue todo de una vez: `hallazgos` (lista nueva), `memoria`
-      // (propuestas para la memoria del cliente) y `resueltos` (ids de
-      // hallazgos anteriores que esta auditoría verificó corregidos).
+      // skill cargue todo de una vez: `controles` (resultado de cada control
+      // del catálogo; se pisan por código), `hallazgos` (lista nueva),
+      // `memoria` (propuestas para la memoria del cliente) y `resueltos` (ids
+      // de hallazgos anteriores que esta auditoría verificó corregidos).
       case 'aud_run_save': {
         const hs = Array.isArray(body.hallazgos) ? body.hallazgos : [];
         const ms = Array.isArray(body.memoria) ? body.memoria : [];
+        const cs = Array.isArray(body.controles) ? body.controles : [];
         if (hs.some((h: any) => !String(h?.titulo ?? '').trim())) return json({ error: 'hay hallazgos sin título' }, 400);
         if (ms.some((m: any) => !String(m?.contenido ?? '').trim())) return json({ error: 'hay memoria sin contenido' }, 400);
+        if (cs.some((c: any) => !String(c?.codigo ?? '').trim() || !String(c?.control ?? '').trim())) {
+          return json({ error: 'hay controles sin código o sin nombre' }, 400);
+        }
         const patch = clean(body.run ?? {}, RUN_FIELDS);
         let run: any;
         if (body.id) {
@@ -357,6 +374,7 @@ Deno.serve(async (req) => {
             for (const k of HALL_INS) o[k] = h?.[k] ?? null;
             o.severidad = o.severidad || 'Media';
             o.estado = o.estado || 'Abierto';
+            o.en_resumen = o.en_resumen === true;
             return o;
           });
           const { error } = await db.from('qb_aud_hallazgos').insert(rows);
@@ -365,9 +383,21 @@ Deno.serve(async (req) => {
         if (ms.length) {
           const rows = ms.map((m: any) => ({
             cliente_id: run.cliente_id, tema: m?.tema || 'General', contenido: m.contenido,
-            estado: m?.estado || 'Propuesta', origen_run_id: run.id,
+            estado: m?.estado || 'Propuesta', origen: m?.origen ?? 'Auditoría', control: m?.control ?? null,
+            origen_run_id: run.id,
           }));
           const { error } = await db.from('qb_aud_memoria').insert(rows);
+          if (error) throw error;
+        }
+        if (cs.length) {
+          const ahora = new Date().toISOString();
+          const rows = cs.map((c: any) => {
+            const o: Record<string, unknown> = { run_id: run.id, cliente_id: run.cliente_id, editado: false, actualizado_at: ahora };
+            for (const k of CTRL_INS) o[k] = c?.[k] ?? null;
+            o.estado = o.estado || 'Pendiente';
+            return o;
+          });
+          const { error } = await db.from('qb_aud_controles').upsert(rows, { onConflict: 'run_id,codigo' });
           if (error) throw error;
         }
         for (const hid of Array.isArray(body.resueltos) ? body.resueltos : []) {
@@ -392,11 +422,21 @@ Deno.serve(async (req) => {
       case 'aud_hallazgo_save': {
         const patch: Record<string, unknown> = clean(body.patch, HALL_FIELDS);
         if (!body.id || !Object.keys(patch).length) return json({ error: 'nada para actualizar' }, 400);
-        if (patch.estado === 'Abierto') { patch.resuelto_fecha = null; patch.resuelto_run_id = null; }
+        if (HALL_ABIERTOS.includes(String(patch.estado))) { patch.resuelto_fecha = null; patch.resuelto_run_id = null; }
         else if (patch.estado) patch.resuelto_fecha = body.patch.resuelto_fecha || new Date().toISOString().slice(0, 10);
         const { data, error } = await db.from('qb_aud_hallazgos').update(patch).eq('id', body.id).select().single();
         if (error) throw error;
         return json({ ok: true, hallazgo: data });
+      }
+
+      // Corrección manual del resultado de un control (queda marcado editado).
+      case 'aud_control_save': {
+        const patch = clean(body.patch ?? {}, CTRL_FIELDS);
+        if (!body.id || !Object.keys(patch).length) return json({ error: 'nada para actualizar' }, 400);
+        const { data, error } = await db.from('qb_aud_controles')
+          .update({ ...patch, editado: true, actualizado_at: new Date().toISOString() }).eq('id', body.id).select().single();
+        if (error) throw error;
+        return json({ ok: true, control: data });
       }
 
       case 'aud_memoria_save': {
@@ -411,6 +451,7 @@ Deno.serve(async (req) => {
         if (!body.cliente_id || !contenido) return json({ error: 'faltan datos' }, 400);
         const { data, error } = await db.from('qb_aud_memoria').insert({
           cliente_id: body.cliente_id, tema: patch.tema || 'General', contenido, estado: patch.estado || 'Vigente',
+          origen: patch.origen ?? null, control: patch.control ?? null,
         }).select().single();
         if (error) throw error;
         return json({ ok: true, memoria: data });

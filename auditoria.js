@@ -4,10 +4,18 @@
    (entrada) y lo que salió (informe), conclusiones, hallazgos, memoria del
    cliente y notas. Las auditorías las carga el skill de Claude Code con las
    acciones aud_* de qb-api; acá se consultan y se ajustan. */
-const AUD_TIPOS = ["Transaction Detail","Profit and Loss","Balance Sheet","Informe","Papel de trabajo","Otro"];
+const AUD_TIPOS_IN = ["Transaction Detail","Profit and Loss","Balance Sheet","Extracto bancario","Tarjeta","Cash Analysis","Reporte de nómina","Otro"];
+const AUD_TIPOS_OUT = ["Reporte resumido","Reporte detallado","Reporte financiero","Mail al cliente","Informe","Papel de trabajo","Otro"];
 const SEV_RANK = { Alta:0, Media:1, Baja:2 };
 const SEMAFORO = { verde:["#2ee6a6","Sin observaciones relevantes"], amarillo:["#ffb23e","Con observaciones"], rojo:["#ff6b6b","Problemas importantes"] };
-const A = { pin:"", view:"lista", cid:null, tab:"auditorias", q:"", runs:[], abiertos:[], exp:null, open:null, hfil:"Abierto" };
+const RUN_TIPOS = ["Integral","Mensual","Cierre anual"];
+const RUN_ESTADOS = ["En curso","Enviada a Dennis","Hecho","Cerrada"];
+const HALL_ESTADOS = ["Abierto","Repetido","Resuelto","Descartado"];
+const HALL_ABIERTO = (h)=>h.estado==="Abierto"||h.estado==="Repetido";
+const DESTINOS = ["AJUSTE","CLIENTE","CIERRE ANUAL","DEFINIR","DEFINIDO","CONTROL"];
+const CTRL_ESTADOS = ["OK","DIFERENCIA","SIN DATO","N/A","Pendiente"];
+const MODULOS = { A:"A · Insumos y calidad de datos", B:"B · Conciliaciones", C:"C · P&L", D:"D · Diario y memos", E:"E · Activos", F:"F · Clasificación", G:"G · Red flags y gobierno" };
+const A = { pin:"", view:"lista", cid:null, tab:"auditorias", q:"", runs:[], abiertos:[], exp:null, open:null, hfil:"Abierto", cfil:"todos" };
 
 async function aapi(action, extra={}){
   const res = await fetch(`${CFG.URL}/functions/v1/${CFG.FN}`,{
@@ -127,7 +135,7 @@ function renderLista(body){
 /* ================= EXPEDIENTE DE UN CLIENTE ================= */
 function renderCliente(body){
   const c=cliDe(A.cid), E=A.exp; const p=PRIOS.includes(c.prioridad)?c.prioridad:"Media";
-  const abiertos=E.hallazgos.filter(h=>h.estado==="Abierto");
+  const abiertos=E.hallazgos.filter(HALL_ABIERTO);
   const propuestas=E.memoria.filter(m=>m.estado==="Propuesta");
   const vigentes=E.memoria.filter(m=>m.estado==="Vigente");
   const u=E.runs[0]; const prox=proxAuditoria(c);
@@ -171,49 +179,98 @@ function tabAuditorias(root){
   bindRun(root);
 }
 function runCard(r){
-  const E=A.exp; const hs=E.hallazgos.filter(h=>h.run_id===r.id); const ab=hs.filter(h=>h.estado==="Abierto").length;
+  const E=A.exp; const hs=E.hallazgos.filter(h=>h.run_id===r.id); const ab=hs.filter(HALL_ABIERTO).length;
   const arch=E.archivos.filter(a=>a.run_id===r.id); const ins=arch.filter(a=>a.rol==="input"), outs=arch.filter(a=>a.rol==="output");
   const res=E.hallazgos.filter(h=>h.resuelto_run_id===r.id && h.run_id!==r.id);
+  const cs=(E.controles||[]).filter(c=>c.run_id===r.id);
+  const malos=cs.filter(c=>c.estado==="DIFERENCIA").length;
   const open=A.open===r.id;
   const head=`<div class="ax-run-head" data-id="${r.id}">
       ${semDot(r.semaforo)}
-      <div class="ax-run-tit"><b>${fechaCorta(r.fecha)}</b> <span class="muted">· período ${periodoTxt(r)}</span>
+      <div class="ax-run-tit"><b>${fechaCorta(r.fecha)}</b> <span class="muted">· ${esc(r.tipo||"Integral")} · período ${periodoTxt(r)}</span>
         <div class="ax-run-res">${esc(r.resumen||"Sin resumen")}</div></div>
       <div class="ax-run-chips">
-        <span class="ax-est ax-est-${esc(r.estado)}">${esc(r.estado)}</span>
+        <span class="ax-est ax-est-${esc(slugEst(r.estado))}">${esc(r.estado)}</span>
+        ${cs.length?`<span class="rr-badge">${cs.length} controles${malos?` · <b style="color:var(--red)">${malos} con diferencia</b>`:""}</span>`:""}
         <span class="rr-badge">${hs.length} hallazgo${hs.length===1?"":"s"}${ab?` · ${ab} abierto${ab===1?"":"s"}`:""}</span>
         <span class="rr-badge">📥 ${ins.length} · 📤 ${outs.length}</span>
         <span class="ax-chev">${open?"▾":"▸"}</span></div></div>`;
   if(!open) return `<div class="ax-run">${head}</div>`;
   const met=Object.entries(r.metricas||{});
+  const enRes=hs.filter(h=>h.en_resumen).length;
   return `<div class="ax-run open">${head}
     <div class="ax-run-body">
       <div class="ax-run-acts">
         <button class="btn ghost sm" data-run-edit="${r.id}">Editar</button>
-        ${r.estado==="Final"?`<button class="btn ghost sm" data-run-estado="${r.id}" data-v="Borrador">Volver a borrador</button>`
-          :`<button class="btn primary sm" data-run-estado="${r.id}" data-v="Final">Marcar como final</button>`}
+        <label class="ax-inl">Estado <select data-run-estado="${r.id}">${RUN_ESTADOS.map(e=>`<option ${e===r.estado?"selected":""}>${e}</option>`).join("")}</select></label>
         <button class="btn ghost sm ax-danger" data-run-del="${r.id}">Eliminar</button>
         <span class="muted ax-meta">${r.skill_version?`Skill ${esc(r.skill_version)}`:""}${r.auditor?` · ${esc(r.auditor)}`:""}</span>
       </div>
       <div class="ax-cols">
-        <div class="chart-card"><h3>Conclusiones</h3>${r.conclusiones?`<div class="ax-concl">${esc(r.conclusiones)}</div>`:'<p class="muted">Sin conclusiones cargadas.</p>'}
+        <div class="chart-card"><h3>📨 Reporte para Dennis <span class="muted">· resumido</span>
+            ${r.reporte_dennis?`<button class="btn ghost sm ax-copy" data-copy="reporte_dennis" data-run="${r.id}">Copiar</button>`:""}</h3>
+          ${r.reporte_dennis?`<pre class="ax-rep">${esc(r.reporte_dennis)}</pre>`:'<p class="muted">Todavía no se armó el reporte resumido.</p>'}
+          ${r.conclusiones?`<h3 style="margin-top:14px">Conclusiones internas</h3><div class="ax-concl">${esc(r.conclusiones)}</div>`:""}
           ${met.length?`<h3 style="margin-top:14px">Cifras clave</h3><div class="ax-met">${met.map(([k,v])=>`<div><span>${esc(k)}</span><b>${metricaVal(v)}</b></div>`).join("")}</div>`:""}
         </div>
         <div class="chart-card"><h3>Documentación</h3>
           ${archivosLista("📥 Entrada (lo que se revisó)",ins)}
-          ${archivosLista("📤 Salida (lo que se generó)",outs)}
+          ${archivosLista("📤 Salida (reportes y mails)",outs)}
           <div class="ax-up">
             <select data-up-rol="${r.id}"><option value="input">Entrada</option><option value="output">Salida</option></select>
-            <select data-up-tipo="${r.id}">${AUD_TIPOS.map(t=>`<option>${t}</option>`).join("")}</select>
+            <select data-up-tipo="${r.id}">${AUD_TIPOS_IN.map(t=>`<option>${t}</option>`).join("")}</select>
             <label class="btn ghost sm ax-file">📎 Subir archivo<input type="file" data-up-file="${r.id}" hidden></label>
           </div>
         </div>
       </div>
-      <div class="chart-card wide"><h3>Hallazgos de esta auditoría <span class="muted">· ${hs.length}</span></h3>
+      ${controlesCard(cs)}
+      <div class="chart-card wide"><h3>Hallazgos de esta auditoría <span class="muted">· ${hs.length}${hs.length?` · ${enRes} van al reporte para Dennis`:""}</span></h3>
         ${hs.length?hallazgosTabla(hs,false):'<p class="muted">Sin hallazgos.</p>'}
         ${res.length?`<p class="muted ax-resueltos">✓ Verificó resueltos ${res.length} hallazgo${res.length===1?"":"s"} de auditorías anteriores: ${res.map(h=>esc(h.titulo)).join(" · ")}</p>`:""}
       </div>
+      ${r.mail_cliente?`<details class="chart-card wide ax-mail"><summary><b>✉️ Mail al cliente</b> <span class="muted">· en inglés, lo envía Breana</span></summary>
+        <div class="ax-mail-acts"><button class="btn ghost sm ax-copy" data-copy="mail_cliente" data-run="${r.id}">Copiar</button></div>
+        <pre class="ax-rep">${esc(r.mail_cliente)}</pre></details>`:""}
     </div></div>`;
+}
+const slugEst = (e)=>String(e||"").replace(/\s+/g,"-");
+
+/* ---- Controles del catálogo (todos; el auditor los puede corregir) ---- */
+function controlesCard(cs){
+  if(!cs.length) return `<div class="chart-card wide"><h3>Controles</h3><p class="muted">Esta auditoría no tiene controles cargados. Los carga el skill al terminar la revisión.</p></div>`;
+  const cnt={}; cs.forEach(c=>cnt[c.estado]=(cnt[c.estado]||0)+1);
+  const dennis=cs.filter(c=>c.paso_dennis);
+  const vis = A.cfil==="dennis" ? dennis : A.cfil==="problemas" ? cs.filter(c=>c.estado!=="OK"&&c.estado!=="N/A") : cs;
+  const mods=[...new Set(vis.map(c=>(c.codigo||"?")[0]))].sort();
+  const seg=[["todos",`Todos (${cs.length})`],["dennis",`9 pasos de Dennis (${dennis.length})`],["problemas",`Con diferencia o sin dato (${cs.length-(cnt.OK||0)-(cnt["N/A"]||0)})`]];
+  return `<div class="chart-card wide"><h3>Controles <span class="muted">· todos los del catálogo; cambiá el estado o el detalle si encontrás un error</span></h3>
+    <div class="ax-cchips">${CTRL_ESTADOS.filter(e=>cnt[e]).map(e=>`<span class="ax-ce ax-ce-${slugEst(e)}">${esc(e)} · ${cnt[e]}</span>`).join("")}</div>
+    <div class="ax-seg ax-cseg">${seg.map(s=>`<button class="tab ${A.cfil===s[0]?"active":""}" data-cf="${s[0]}">${s[1]}</button>`).join("")}</div>
+    ${vis.length?`<div class="ax-scroll"><table class="ip-table ax-ctrl"><thead><tr><th>Código</th><th class="l">Control</th><th>Paso Dennis</th><th>Resultado</th><th class="l">Detalle</th><th></th></tr></thead><tbody>
+      ${mods.map(m=>`<tr class="ax-mod"><td colspan="6">${esc(MODULOS[m]||m)}</td></tr>`+vis.filter(c=>(c.codigo||"?")[0]===m).map(c=>`<tr>
+        <td data-label="Código"><b>${esc(c.codigo)}</b></td>
+        <td class="l" data-label="Control">${esc(c.control)}${c.criterio?`<div class="muted ax-small">${esc(c.criterio)}</div>`:""}</td>
+        <td data-label="Paso Dennis">${c.paso_dennis?`<span class="ax-paso">${esc(c.paso_dennis)}</span>`:'<span class="muted">—</span>'}</td>
+        <td data-label="Resultado"><select class="ax-cest ax-ce-${slugEst(c.estado)}" data-cid="${c.id}">${CTRL_ESTADOS.map(e=>`<option ${e===c.estado?"selected":""}>${e}</option>`).join("")}</select>
+          ${c.editado?`<div class="ax-small ax-edit" title="Lo cambió el auditor a mano">✎ editado</div>`:""}</td>
+        <td class="l" data-label="Detalle">${c.detalle?esc(c.detalle):'<span class="muted">—</span>'}${c.fuente?`<div class="muted ax-small">Fuente: ${esc(c.fuente)}</div>`:""}</td>
+        <td><button class="btn ghost sm" data-cedit="${c.id}" title="Editar resultado y detalle">✎</button></td></tr>`).join("")).join("")}
+    </tbody></table></div>`:`<p class="muted">Ningún control en este filtro.</p>`}</div>`;
+}
+function editarControl(id){
+  const c=A.exp.controles.find(x=>x.id===id);
+  openModal(`${c.codigo} · ${c.control}`,`
+    ${c.criterio?`<p class="muted">${esc(c.criterio)}</p>`:""}
+    <label>Resultado</label><select id="xc-est">${CTRL_ESTADOS.map(e=>`<option ${e===c.estado?"selected":""}>${e}</option>`).join("")}</select>
+    <label>Detalle</label><textarea id="xc-det" rows="5">${esc(c.detalle||"")}</textarea>
+    <label>Fuente (con qué se verificó)</label><input id="xc-fue" value="${esc(c.fuente||"")}">
+    <div class="modal-actions"><button class="btn ghost" id="xc-cancel">Cancelar</button><button class="btn primary" id="xc-save">Guardar</button></div>`);
+  $("#xc-cancel").addEventListener("click",closeModal);
+  $("#xc-save").addEventListener("click",async ()=>{
+    try{ await aapi("aud_control_save",{ id, patch:{ estado:$("#xc-est").value, detalle:$("#xc-det").value.trim()||null, fuente:$("#xc-fue").value.trim()||null } });
+      closeModal(); await recargarCliente(); toast("Control actualizado ✓"); }
+    catch(ex){ toast(ex.message,true); }
+  });
 }
 function archivosLista(tit, list){
   return `<div class="ax-arch-tit">${tit}</div>`+(list.length?`<ul class="ax-arch">${list.map(a=>`<li>
@@ -225,28 +282,44 @@ function archivosLista(tit, list){
 }
 function bindRun(root){
   $$("[data-run-edit]",root).forEach(b=>b.addEventListener("click",()=>editarRun(+b.dataset.runEdit)));
-  $$("[data-run-estado]",root).forEach(b=>b.addEventListener("click",()=>guardarRun(+b.dataset.runEstado,{ estado:b.dataset.v })));
+  $$("[data-run-estado]",root).forEach(s=>s.addEventListener("change",()=>guardarRun(+s.dataset.runEstado,{ estado:s.value })));
   $$("[data-run-del]",root).forEach(b=>b.addEventListener("click",()=>borrarRun(+b.dataset.runDel)));
   $$("[data-dl]",root).forEach(b=>b.addEventListener("click",()=>descargar(+b.dataset.dl)));
   $$("[data-arch-del]",root).forEach(b=>b.addEventListener("click",()=>borrarArchivo(+b.dataset.archDel)));
+  $$("[data-up-rol]",root).forEach(s=>s.addEventListener("change",()=>{
+    $(`[data-up-tipo="${s.dataset.upRol}"]`,root).innerHTML=(s.value==="input"?AUD_TIPOS_IN:AUD_TIPOS_OUT).map(t=>`<option>${t}</option>`).join(""); }));
+  $$("[data-copy]",root).forEach(b=>b.addEventListener("click",async (e)=>{ e.stopPropagation();
+    const r=A.exp.runs.find(x=>x.id===+b.dataset.run);
+    try{ await navigator.clipboard.writeText(r[b.dataset.copy]||""); toast("Copiado ✓"); }catch(ex){ toast("No se pudo copiar",true); } }));
+  $$("[data-cf]",root).forEach(b=>b.addEventListener("click",()=>{ A.cfil=b.dataset.cf; renderExp(); }));
+  $$(".ax-cest",root).forEach(s=>s.addEventListener("change",async ()=>{
+    try{ await aapi("aud_control_save",{ id:+s.dataset.cid, patch:{ estado:s.value } }); await recargarCliente(); toast("Control actualizado ✓"); }
+    catch(ex){ toast(ex.message,true); } }));
+  $$("[data-cedit]",root).forEach(b=>b.addEventListener("click",()=>editarControl(+b.dataset.cedit)));
   $$("[data-up-file]",root).forEach(inp=>inp.addEventListener("change",()=>{ const id=+inp.dataset.upFile;
     subirArchivo(id, inp.files[0], $(`[data-up-rol="${id}"]`,root).value, $(`[data-up-tipo="${id}"]`,root).value); }));
   bindHallazgos(root);
 }
 function editarRun(id){
-  const r = id ? A.exp.runs.find(x=>x.id===id) : { fecha:todayStr(), estado:"Borrador" };
+  const r = id ? A.exp.runs.find(x=>x.id===id) : { fecha:todayStr(), estado:"En curso", tipo:"Integral" };
   openModal(id?"Editar auditoría":"Nueva auditoría",`
+    <div class="row2"><div><label>Tipo</label><select id="xr-tipo">${RUN_TIPOS.map(t=>`<option ${t===(r.tipo||"Integral")?"selected":""}>${t}</option>`).join("")}</select></div>
+      <div><label>Estado</label><select id="xr-est">${RUN_ESTADOS.map(e=>`<option ${e===r.estado?"selected":""}>${e}</option>`).join("")}</select></div></div>
     <div class="row2"><div><label>Período desde</label><input type="date" id="xr-desde" value="${esc(r.periodo_desde||"")}"></div>
       <div><label>Período hasta</label><input type="date" id="xr-hasta" value="${esc(r.periodo_hasta||"")}"></div></div>
     <div class="row2"><div><label>Fecha de la auditoría</label><input type="date" id="xr-fecha" value="${esc(r.fecha||todayStr())}"></div>
       <div><label>Semáforo</label><select id="xr-sem"><option value="">—</option>${Object.keys(SEMAFORO).map(k=>`<option value="${k}" ${r.semaforo===k?"selected":""}>${k} · ${SEMAFORO[k][1]}</option>`).join("")}</select></div></div>
     <label>Resumen (2–3 líneas)</label><textarea id="xr-res" rows="2">${esc(r.resumen||"")}</textarea>
-    <label>Conclusiones</label><textarea id="xr-con" rows="8">${esc(r.conclusiones||"")}</textarea>
+    <label>Reporte para Dennis (resumido)</label><textarea id="xr-rep" rows="8">${esc(r.reporte_dennis||"")}</textarea>
+    <label>Conclusiones internas</label><textarea id="xr-con" rows="5">${esc(r.conclusiones||"")}</textarea>
+    <label>Mail al cliente (inglés)</label><textarea id="xr-mail" rows="5">${esc(r.mail_cliente||"")}</textarea>
     <div class="modal-actions"><button class="btn ghost" id="xr-cancel">Cancelar</button><button class="btn primary" id="xr-save">Guardar</button></div>`);
   $("#xr-cancel").addEventListener("click",closeModal);
   $("#xr-save").addEventListener("click",async ()=>{
-    const patch={ periodo_desde:$("#xr-desde").value||null, periodo_hasta:$("#xr-hasta").value||null, fecha:$("#xr-fecha").value||todayStr(),
-      semaforo:$("#xr-sem").value||null, resumen:$("#xr-res").value.trim()||null, conclusiones:$("#xr-con").value.trim()||null };
+    const patch={ tipo:$("#xr-tipo").value, estado:$("#xr-est").value,
+      periodo_desde:$("#xr-desde").value||null, periodo_hasta:$("#xr-hasta").value||null, fecha:$("#xr-fecha").value||todayStr(),
+      semaforo:$("#xr-sem").value||null, resumen:$("#xr-res").value.trim()||null, conclusiones:$("#xr-con").value.trim()||null,
+      reporte_dennis:$("#xr-rep").value.trim()||null, mail_cliente:$("#xr-mail").value.trim()||null };
     if(id) return guardarRun(id,patch,true);
     try{ const d=await aapi("aud_run_save",{ run:{ ...patch, cliente_id:A.cid } }); closeModal(); A.open=d.run.id; A.tab="auditorias"; await recargarCliente(); toast("Auditoría creada ✓"); }
     catch(ex){ toast(ex.message,true); }
@@ -293,16 +366,18 @@ async function borrarArchivo(id){
 function hallazgosTabla(hs, conAuditoria){
   const fechaRun=(id)=>{ const r=A.exp.runs.find(x=>x.id===id); return r?fechaCorta(r.fecha):"—"; };
   hs=hs.slice().sort((a,b)=>SEV_RANK[a.severidad]-SEV_RANK[b.severidad]||a.id-b.id);
-  return `<div class="ax-scroll"><table class="ip-table ax-hall"><thead><tr><th>Severidad</th><th class="l">Hallazgo</th><th class="l">Área / cuenta</th><th class="r">Monto</th>${conAuditoria?"<th>Auditoría</th>":""}<th>Estado</th></tr></thead><tbody>
-    ${hs.map(h=>`<tr class="${h.estado!=="Abierto"?"ax-cerrado":""}">
+  return `<div class="ax-scroll"><table class="ip-table ax-hall"><thead><tr><th>Severidad</th><th class="l">Hallazgo</th><th class="l">Área / cuenta</th><th class="r">Monto</th>${conAuditoria?"<th>Auditoría</th>":""}<th>Destino</th><th title="Va al reporte resumido para Dennis">A Dennis</th><th>Estado</th></tr></thead><tbody>
+    ${hs.map(h=>`<tr class="${HALL_ABIERTO(h)?"":"ax-cerrado"}">
       <td data-label="Severidad">${sevBadge(h.severidad)}</td>
       <td class="l" data-label="Hallazgo"><b>${esc(h.titulo)}</b>${h.codigo?` <span class="muted">${esc(h.codigo)}</span>`:""}
         ${h.detalle?`<div class="ax-det">${esc(h.detalle)}</div>`:""}${h.recomendacion?`<div class="ax-rec">→ ${esc(h.recomendacion)}</div>`:""}</td>
       <td class="l" data-label="Área / cuenta">${esc(h.area||"—")}${h.cuenta?`<div class="muted">${esc(h.cuenta)}</div>`:""}</td>
       <td class="r" data-label="Monto">${h.monto!=null?Number(h.monto).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}</td>
       ${conAuditoria?`<td data-label="Auditoría">${fechaRun(h.run_id)}</td>`:""}
-      <td data-label="Estado"><select class="ax-hest" data-hid="${h.id}">${["Abierto","Resuelto","Descartado"].map(e=>`<option ${e===h.estado?"selected":""}>${e}</option>`).join("")}</select>
-        ${h.estado!=="Abierto"&&h.resuelto_fecha?`<div class="muted ax-small">${fechaCorta(h.resuelto_fecha)}</div>`:""}</td>
+      <td data-label="Destino"><select class="ax-hdest" data-hid="${h.id}"><option value="">—</option>${DESTINOS.map(d=>`<option ${d===h.destino?"selected":""}>${d}</option>`).join("")}</select></td>
+      <td data-label="A Dennis" class="tc"><input type="checkbox" class="ax-hres" data-hid="${h.id}" ${h.en_resumen?"checked":""} title="Incluir en el reporte resumido para Dennis"></td>
+      <td data-label="Estado"><select class="ax-hest ${h.estado==="Repetido"?"ax-rep-est":""}" data-hid="${h.id}">${HALL_ESTADOS.map(e=>`<option ${e===h.estado?"selected":""}>${e}</option>`).join("")}</select>
+        ${!HALL_ABIERTO(h)&&h.resuelto_fecha?`<div class="muted ax-small">${fechaCorta(h.resuelto_fecha)}</div>`:""}</td>
     </tr>`).join("")}</tbody></table></div>`;
 }
 function bindHallazgos(root){
@@ -310,9 +385,18 @@ function bindHallazgos(root){
     try{ await aapi("aud_hallazgo_save",{ id:+s.dataset.hid, patch:{ estado:s.value } }); await recargarCliente(); toast("Hallazgo "+s.value.toLowerCase()+" ✓"); }
     catch(ex){ toast(ex.message,true); }
   }));
+  $$(".ax-hdest",root).forEach(s=>s.addEventListener("change",async ()=>{
+    try{ await aapi("aud_hallazgo_save",{ id:+s.dataset.hid, patch:{ destino:s.value||null } }); await recargarCliente(); toast("Destino guardado ✓"); }
+    catch(ex){ toast(ex.message,true); }
+  }));
+  $$(".ax-hres",root).forEach(c=>c.addEventListener("change",async ()=>{
+    try{ await aapi("aud_hallazgo_save",{ id:+c.dataset.hid, patch:{ en_resumen:c.checked } }); await recargarCliente();
+      toast(c.checked?"Va al reporte para Dennis ✓":"Queda solo en el detallado"); }
+    catch(ex){ toast(ex.message,true); }
+  }));
 }
 function tabHallazgos(root){
-  const hs=A.exp.hallazgos.filter(h=>A.hfil==="Todos"||h.estado===A.hfil);
+  const hs=A.exp.hallazgos.filter(h=>A.hfil==="Todos"||(A.hfil==="Abierto"?HALL_ABIERTO(h):h.estado===A.hfil));
   root.innerHTML=`<div class="ax-bar"><div class="ax-seg">${["Abierto","Resuelto","Descartado","Todos"].map(f=>
       `<button class="tab ${A.hfil===f?"active":""}" data-hf="${f}">${f==="Abierto"?"Abiertos":f==="Todos"?"Todos":f+"s"}</button>`).join("")}</div>
       <span class="muted">La próxima auditoría arranca revisando los abiertos.</span></div>
@@ -325,7 +409,8 @@ function tabHallazgos(root){
 function tabMemoria(root){
   const M=A.exp.memoria; const prop=M.filter(m=>m.estado==="Propuesta"), vig=M.filter(m=>m.estado==="Vigente"), arch=M.filter(m=>m.estado==="Archivada");
   const temas=[...new Set(vig.map(m=>m.tema))].sort();
-  const item=(m,acts,tema=true)=>`<li class="ax-mem"><div>${tema?`<span class="ax-tema">${esc(m.tema)}</span> `:""}${esc(m.contenido)}</div><div class="ax-mem-acts">${acts}</div></li>`;
+  const origen=(m)=>[m.origen,m.control].filter(Boolean).map(esc).join(" · ");
+  const item=(m,acts,tema=true)=>`<li class="ax-mem"><div>${tema?`<span class="ax-tema">${esc(m.tema)}</span> `:""}${esc(m.contenido)}${origen(m)?` <span class="muted ax-small">(${origen(m)})</span>`:""}</div><div class="ax-mem-acts">${acts}</div></li>`;
   root.innerHTML=`<div class="rr-note">Datos firmes del cliente que cada auditoría nueva tiene que tener en cuenta (cómo opera, cuentas especiales, criterios acordados). El skill propone; vos aprobás.</div>
     ${prop.length?`<div class="chart-card wide ax-prop"><h3>Propuestas del skill para revisar <span class="muted">· ${prop.length}</span></h3><ul class="ax-mem-list">
       ${prop.map(m=>item(m,`<button class="btn primary sm" data-mem-ok="${m.id}">✓ Aprobar</button><button class="btn ghost sm" data-mem-edit="${m.id}">Editar</button><button class="btn ghost sm" data-mem-arch="${m.id}">Descartar</button>`)).join("")}</ul></div>`:""}

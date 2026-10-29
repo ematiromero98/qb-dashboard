@@ -6,7 +6,7 @@
 // paquetes remotos (jsr:/npm:/esm.sh daban timeout) y sólo aceptaba código
 // local. Implementa únicamente lo que usan esas funciones:
 //   from(t).select/insert/update/upsert/delete
-//          .eq/.lt/.order/.limit/.range/.single/.maybeSingle
+//          .eq/.in/.lt/.order/.limit/.range/.single/.maybeSingle
 // y devuelve { data, error } igual que supabase-js.
 
 type Res = { data: any; error: any };
@@ -44,6 +44,10 @@ class Query implements PromiseLike<Res> {
     return this;
   }
   eq(col: string, v: unknown) { this.params.push([col, `eq.${v}`]); return this; }
+  in(col: string, vs: unknown[]) {
+    this.params.push([col, `in.(${vs.map((v) => `"${String(v).replace(/"/g, '\\"')}"`).join(',')})`]);
+    return this;
+  }
   lt(col: string, v: unknown) { this.params.push([col, `lt.${v}`]); return this; }
   order(col: string, opts: { ascending?: boolean } = {}) {
     this.orders.push(`${col}.${opts.ascending === false ? 'desc' : 'asc'}`);
