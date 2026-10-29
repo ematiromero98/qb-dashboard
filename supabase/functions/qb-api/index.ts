@@ -138,7 +138,8 @@ async function storage(method: string, path: string, body?: unknown) {
   const r = await fetch(`${SB_URL}/storage/v1/${path}`, {
     method,
     headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`, 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    // Storage rechaza un POST con Content-Type JSON y cuerpo vacío (ej. upload/sign): mandar {}.
+    body: JSON.stringify(body ?? {}),
   });
   const d = await r.json().catch(() => null);
   if (!r.ok) throw new Error(`storage ${r.status}: ${JSON.stringify(d)}`);
