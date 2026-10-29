@@ -149,15 +149,17 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
   const { pin, action } = body ?? {};
 
-  const { data: cfg } = await db.from('qb_config').select('pin, pin_admin').eq('id', 1).single();
-  // Acciones de jefes: el módulo rrhh_*, los expedientes de auditoría (aud_*)
-  // y cambiar el PIN general (set_pin). Con el PIN general solo no se puede
-  // cambiar el PIN de todos.
-  const isAdmin = typeof action === 'string' && (action.startsWith('rrhh_') || action.startsWith('aud_') || action === 'set_pin');
+  const { data: cfg } = await db.from('qb_config').select('pin, pin_admin, pin_aud').eq('id', 1).single();
+  // Acciones de jefes: el módulo rrhh_* y cambiar el PIN general (set_pin).
+  // Con el PIN general solo no se puede cambiar el PIN de todos.
+  // Los expedientes de auditoría (aud_*) tienen su propio PIN (pin_aud; si
+  // está vacío, rige el de jefes).
+  const isAud = typeof action === 'string' && action.startsWith('aud_');
+  const isAdmin = typeof action === 'string' && (action.startsWith('rrhh_') || action === 'set_pin');
   if (!cfg) return json({ error: 'PIN incorrecto' }, 401);
-  // PIN general y PIN de jefes (rrhh_*) llevan contadores de bloqueo separados.
-  const need = String((isAdmin ? cfg.pin_admin : cfg.pin) ?? '');
-  const deny = await checkPin(req, isAdmin ? 'qb-api:admin' : 'qb-api', String(pin ?? ''), need, 'PIN incorrecto');
+  // Cada PIN lleva su propio contador de bloqueo.
+  const need = String((isAud ? (cfg.pin_aud || cfg.pin_admin) : isAdmin ? cfg.pin_admin : cfg.pin) ?? '');
+  const deny = await checkPin(req, isAud ? 'qb-api:aud' : isAdmin ? 'qb-api:admin' : 'qb-api', String(pin ?? ''), need, 'PIN incorrecto');
   if (deny) return deny;
 
   try {

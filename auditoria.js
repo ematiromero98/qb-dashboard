@@ -19,18 +19,18 @@ async function aapi(action, extra={}){
   return data;
 }
 
-/* ---- abrir (pide el PIN de jefes; se comparte con Sueldos) ---- */
+/* ---- abrir (pide el PIN de expedientes, propio del módulo) ---- */
 async function abrirExpedientes(cid){
-  const saved = sessionStorage.getItem("qb_pin_admin");
-  if(saved){ A.pin=saved; try{ await aapi("aud_login"); return entrarExp(cid); }catch(e){ sessionStorage.removeItem("qb_pin_admin"); } }
+  const saved = sessionStorage.getItem("qb_pin_aud");
+  if(saved){ A.pin=saved; try{ await aapi("aud_login"); return entrarExp(cid); }catch(e){ sessionStorage.removeItem("qb_pin_aud"); } }
   openModal("🔒 Expedientes de auditoría", `
-    <p class="muted">Ingresá el PIN de jefes para ver los expedientes de auditoría.</p>
-    <label>PIN de jefes</label><input id="xa-pin" type="password" autocomplete="off">
+    <p class="muted">Ingresá el PIN de expedientes para ver las auditorías.</p>
+    <label>PIN de expedientes</label><input id="xa-pin" type="password" autocomplete="off">
     <div id="xa-err" class="gate-err"></div>
     <div class="modal-actions"><button class="btn ghost" id="xa-cancel">Cancelar</button><button class="btn primary" id="xa-ok">Entrar</button></div>`);
   const go=async ()=>{
     A.pin=$("#xa-pin").value.trim();
-    try{ await aapi("aud_login"); sessionStorage.setItem("qb_pin_admin",A.pin); closeModal(); entrarExp(cid); }
+    try{ await aapi("aud_login"); sessionStorage.setItem("qb_pin_aud",A.pin); closeModal(); entrarExp(cid); }
     catch(ex){ $("#xa-err").textContent=ex.message; A.pin=""; }
   };
   $("#xa-cancel").addEventListener("click",closeModal);
