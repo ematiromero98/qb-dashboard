@@ -447,14 +447,18 @@ Deno.serve(async (req) => {
       // Para la lista de clientes: todas las auditorías (cabecera) y los
       // hallazgos abiertos (incluye los Repetidos).
       case 'aud_resumen': {
-        const [runs, hall] = await Promise.all([
+        // avance: por auditoría, puntos y filas de la Revisión que faltan corregir
+        // (botón «Pendientes de corregir»).
+        const [runs, hall, avance] = await Promise.all([
           db.from('qb_aud_runs').select('id, cliente_id, fecha, periodo_desde, periodo_hasta, estado, semaforo')
             .order('fecha', { ascending: false }),
           db.from('qb_aud_hallazgos').select('cliente_id, severidad').in('estado', HALL_ABIERTOS),
+          db.from('qb_aud_avance').select('*'),
         ]);
         if (runs.error) throw runs.error;
         if (hall.error) throw hall.error;
-        return json({ runs: runs.data ?? [], abiertos: hall.data ?? [] });
+        if (avance.error) throw avance.error;
+        return json({ runs: runs.data ?? [], abiertos: hall.data ?? [], avance: avance.data ?? [] });
       }
 
       // Expediente completo de un cliente. Es también el contexto que lee el

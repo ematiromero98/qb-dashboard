@@ -14,7 +14,7 @@ const HALL_ABIERTO = (h)=>h.estado==="Abierto"||h.estado==="Repetido";
 const DESTINOS = ["AJUSTE","CLIENTE","CIERRE ANUAL","DEFINIR","DEFINIDO","CONTROL"];
 const CTRL_ESTADOS = ["OK","DIFERENCIA","SIN DATO","N/A","Pendiente"];
 const MODULOS = { A:"A · Insumos y calidad de datos", B:"B · Conciliaciones", C:"C · P&L", D:"D · Diario y memos", E:"E · Activos", F:"F · Clasificación", G:"G · Red flags y gobierno" };
-const A = { pin:"", view:"lista", cid:null, tab:"auditorias", q:"", runs:[], abiertos:[], exp:null, open:null, hfil:"Abierto", cfil:"todos", rrun:null, rfil:"todo" };
+const A = { pin:"", view:"lista", cid:null, tab:"auditorias", q:"", runs:[], abiertos:[], exp:null, open:null, hfil:"Abierto", cfil:"todos", rrun:null, rfil:"todo", lv:"empresas", pver:"pend", avance:[] };
 // Revisión: los pasos de Dennis (mismos textos que la plantilla «Revisión … – HECHA» del skill).
 const PASOS_DENNIS = { "0":"Repetidos y cambios de reglas de la Nota anterior: hechos", "1":"Misc ≈ $0",
   "2":"Total Expense > $350: memos leídos, cuenta correcta", "3":"Payroll: S&W del P&L = bruto YTD Datatech/AME",
@@ -68,12 +68,13 @@ async function entrarExp(cid){
     $("#xa-err-close").addEventListener("click",cerrarExp); }
 }
 function cerrarExp(){ $("#aud").classList.add("hidden"); }
-async function cargarResumen(){ const d=await aapi("aud_resumen"); A.runs=d.runs; A.abiertos=d.abiertos; }
-async function verCliente(cid){
+async function cargarResumen(){ const d=await aapi("aud_resumen"); A.runs=d.runs; A.abiertos=d.abiertos; A.avance=d.avance||[]; }
+async function verCliente(cid, runId){
   A.cid=cid; A.view="cliente"; A.open=null;
   A.exp=await aapi("aud_cliente",{ cliente_id:cid });
   if(A.exp.runs.length) A.open=A.exp.runs[0].id;
   A.rrun=runsConRevision()[0]?.id ?? null;
+  if(runId && runsConRevision().some(r=>r.id===runId)){ A.rrun=runId; A.tab="revision"; A.rfil="pend"; }
   if(A.rrun && A.tab==="auditorias") A.tab="revision";
   renderExp();
 }
@@ -108,7 +109,59 @@ function renderExp(){
 }
 
 /* ================= LISTA DE CLIENTES ================= */
+const avanceDe = r => A.avance.find(a=>a.run_id===r.id);
+const conRevision = () => A.runs.filter(r=>(avanceDe(r)?.puntos||0)>0);
+const pendiente = r => (avanceDe(r)?.puntos_abiertos||0)>0;
+function vistaSeg(){
+  const n=conRevision().filter(pendiente).length;
+  return `<div class="ax-seg ax-vistas">${[["empresas","📁 Empresas"],["pend",`⏳ Pendientes de corregir <span class="cnt">${n}</span>`]]
+    .map(v=>`<button class="tab ${A.lv===v[0]?"active":""}" data-lv="${v[0]}">${v[1]}</button>`).join("")}</div>`;
+}
+function bindVistas(body){ $$("[data-lv]",body).forEach(b=>b.addEventListener("click",()=>{ A.lv=b.dataset.lv; renderExp(); })); }
+
+/* Auditorías cuya Revisión tiene puntos sin corregir: un vistazo para saber qué falta para que quede OK. */
+function renderPendientes(body){
+  const cli=Object.fromEntries(S.clientes.map(c=>[c.id,c]));
+  const q=A.q.toLowerCase();
+  const todas=conRevision();
+  const lista=todas.filter(r=>A.pver==="todas"||pendiente(r))
+    .filter(r=>{ const c=cli[r.cliente_id]; return !q || (c?.nombre||"").toLowerCase().includes(q) || (c?.bookkeeper_default||"").toLowerCase().includes(q); })
+    .sort((a,b)=>pendiente(b)-pendiente(a) || (avanceDe(b).filas_pendientes-avanceDe(a).filas_pendientes) || (avanceDe(b).puntos_abiertos-avanceDe(a).puntos_abiertos));
+  const pend=todas.filter(pendiente), sum=k=>pend.reduce((t,r)=>t+(avanceDe(r)[k]||0),0);
+  body.innerHTML=`${vistaSeg()}
+    <div class="ax-kpis ax-k5">
+      <div class="ax-kpi"><b style="color:var(--amber)">${pend.length}</b><span>auditorías con algo por corregir</span></div>
+      <div class="ax-kpi"><b>${sum("filas_pendientes")}</b><span>filas sin tildar</span></div>
+      <div class="ax-kpi"><b>${sum("puntos_abiertos")}</b><span>puntos abiertos</span></div>
+      <div class="ax-kpi"><b>${sum("puntos_dennis")}</b><span>esperan a Dennis</span></div>
+      <div class="ax-kpi"><b style="color:var(--menta)">${todas.length-pend.length}</b><span>auditorías OK</span></div>
+    </div>
+    <div class="ax-bar"><input id="ax-q" type="search" placeholder="Buscar empresa o bookkeeper…" value="${esc(A.q)}">
+      <div class="ax-seg">${[["pend","Pendientes"],["todas","Todas"]].map(s=>`<button class="tab ${A.pver===s[0]?"active":""}" data-pv="${s[0]}">${s[1]}</button>`).join("")}</div></div>
+    ${lista.length?`<div class="ax-scroll"><table class="audit-table ax-lista ax-pend"><thead><tr>
+      <th>Empresa</th><th>Bookkeeper</th><th>Auditoría</th><th>Filas corregidas</th><th>Puntos abiertos</th><th>Esperan a Dennis</th><th>Último tilde</th><th>Estado</th>
+    </tr></thead><tbody>${lista.map(r=>{ const a=avanceDe(r), c=cli[r.cliente_id]||{}, ok=a.filas-a.filas_pendientes, pct=a.filas?Math.round(ok*100/a.filas):100;
+      return `<tr class="ax-row" data-cid="${r.cliente_id}" data-run="${r.id}" title="Abrir la Revisión">
+        <td data-label="Empresa"><b>${esc(c.nombre||"#"+r.cliente_id)}</b></td>
+        <td data-label="Bookkeeper">${esc(c.bookkeeper_default||"—")}</td>
+        <td data-label="Auditoría">${fechaCorta(r.fecha)} <span class="muted">· ${esc(periodoTxt(r))}</span></td>
+        <td data-label="Filas"><div class="rv-prog"><div class="rv-bar ax-mini"><i style="width:${pct}%"></i></div><span><b>${ok}</b> de ${a.filas}</span></div></td>
+        <td class="tc" data-label="Puntos abiertos">${a.puntos_abiertos?`<b style="color:var(--amber)">${a.puntos_abiertos}</b> <span class="muted">de ${a.puntos}</span>`:`<span class="muted">0 de ${a.puntos}</span>`}</td>
+        <td class="tc" data-label="Esperan a Dennis">${a.puntos_dennis?`<b>${a.puntos_dennis}</b>`:'<span class="muted">—</span>'}</td>
+        <td data-label="Último tilde">${a.ultimo_tilde?fechaCorta(String(a.ultimo_tilde).slice(0,10)):'<span class="muted">Sin empezar</span>'}</td>
+        <td data-label="Estado">${pendiente(r)?'<span class="rv-est">Pendiente</span>':'<span class="rv-est ok">✔ OK</span>'}</td></tr>`; }).join("")}
+    </tbody></table></div>`
+    :`<div class="empty">${A.pver==="pend"?"✔ No hay auditorías con correcciones pendientes.":"Todavía no hay auditorías con la Revisión cargada."}</div>`}
+    <div class="rr-note">Una auditoría queda <b>OK</b> cuando todos los puntos de su Revisión están resueltos. Clic en una fila para abrirla en la pestaña Revisión.</div>`;
+  bindVistas(body);
+  $$("[data-pv]",body).forEach(b=>b.addEventListener("click",()=>{ A.pver=b.dataset.pv; renderExp(); }));
+  const qi=$("#ax-q");
+  qi.addEventListener("input",()=>{ A.q=qi.value; const pos=qi.selectionStart; renderPendientes(body); const n=$("#ax-q"); n.focus(); n.setSelectionRange(pos,pos); });
+  $$(".ax-row",body).forEach(tr=>tr.addEventListener("click",()=>verCliente(+tr.dataset.cid, +tr.dataset.run).catch(ex=>toast(ex.message,true))));
+}
+
 function renderLista(body){
+  if(A.lv==="pend") return renderPendientes(body);
   const ultima={}, cant={}, abiertos={}, altas={};
   A.runs.forEach(r=>{ cant[r.cliente_id]=(cant[r.cliente_id]||0)+1; if(!ultima[r.cliente_id]) ultima[r.cliente_id]=r; });
   A.abiertos.forEach(h=>{ abiertos[h.cliente_id]=(abiertos[h.cliente_id]||0)+1; });
@@ -118,7 +171,7 @@ function renderLista(body){
   const anio=String(new Date().getFullYear());
   const nAnio=A.runs.filter(r=>String(r.fecha).startsWith(anio)).length;
   const nCli=Object.keys(cant).length;
-  body.innerHTML=`
+  body.innerHTML=`${vistaSeg()}
     <div class="ax-kpis">
       <div class="ax-kpi"><b>${nCli}</b><span>clientes con expediente</span></div>
       <div class="ax-kpi"><b>${nAnio}</b><span>auditorías en ${anio}</span></div>
@@ -141,6 +194,7 @@ function renderLista(body){
   const qi=$("#ax-q");
   qi.addEventListener("input",()=>{ A.q=qi.value; const pos=qi.selectionStart; renderLista(body); const n=$("#ax-q"); n.focus(); n.setSelectionRange(pos,pos); });
   $$(".ax-row",body).forEach(tr=>tr.addEventListener("click",()=>verCliente(+tr.dataset.cid).catch(ex=>toast(ex.message,true))));
+  bindVistas(body);
 }
 
 /* ================= EXPEDIENTE DE UN CLIENTE ================= */
