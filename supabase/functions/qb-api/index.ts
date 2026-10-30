@@ -562,7 +562,7 @@ Deno.serve(async (req) => {
       case 'aud_hallazgo_save': {
         const patch: Record<string, unknown> = clean(body.patch, HALL_FIELDS);
         if (!body.id || !Object.keys(patch).length) return json({ error: 'nada para actualizar' }, 400);
-        // Respuesta de Dennis a un punto «Definir con Dennis»: queda definido y se habilitan sus filas.
+        // Lo que dijo Dennis sobre un punto «Consultar con Dennis»: queda anotado (no bloquea nada).
         if (typeof patch.respuesta_dennis === 'string' && patch.respuesta_dennis.trim()) {
           const { data: cur } = await db.from('qb_aud_hallazgos').select('destino').eq('id', body.id).maybeSingle();
           if (cur?.destino === 'DEFINIR' && !patch.destino) patch.destino = 'DEFINIDO';
@@ -588,10 +588,6 @@ Deno.serve(async (req) => {
           if (!CORR_ESTADOS.includes(p.estado)) return json({ error: 'estado inválido' }, 400);
           const nota = patch.nota !== undefined ? patch.nota : f.nota;
           if (CORR_CON_NOTA.includes(p.estado) && !nota) return json({ error: `«${p.estado}» necesita una nota que diga qué se hizo o por qué` }, 400);
-          if (p.estado !== 'Pendiente') {
-            const { data: h } = await db.from('qb_aud_hallazgos').select('destino').eq('id', f.hallazgo_id).maybeSingle();
-            if (h?.destino === 'DEFINIR') return json({ error: 'Este punto espera la definición de Dennis: cargá su respuesta primero' }, 400);
-          }
           if (p.estado !== f.estado) {
             patch.estado = p.estado;
             patch.hecho_por = p.estado === 'Pendiente' ? null : quienDe(body.quien);

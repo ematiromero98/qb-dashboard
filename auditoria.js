@@ -27,7 +27,7 @@ const CAPTURA = { "1":"captura", "3":"captura (los dos números)", "6":"captura 
 const PASO_ORDEN = [...Object.keys(PASOS_DENNIS), "otros"];
 const CORR_HECHAS = ["Corregido","Hecho distinto","No corresponde","Ya no aparece"];
 const CORR_ICONO = { "Pendiente":"☐", "Corregido":"✔", "Hecho distinto":"✎", "No corresponde":"✕", "Ya no aparece":"—" };
-const MARCA = { DEFINIR:["Definir con Dennis","def"], CLIENTE:["Pedir al cliente · va en el mail","cli"], "CIERRE ANUAL":["Al cierre","cie"], DEFINIDO:["Definido por Dennis","ok"] };
+const MARCA = { DEFINIR:["Consultar con Dennis","def"], CLIENTE:["Pedir al cliente · va en el mail","cli"], "CIERRE ANUAL":["Al cierre","cie"], DEFINIDO:["Consultado con Dennis","ok"] };
 
 async function aapi(action, extra={}){
   const res = await fetch(`${CFG.URL}/functions/v1/${CFG.FN}`,{
@@ -133,13 +133,12 @@ function renderPendientes(body){
       <div class="ax-kpi"><b style="color:var(--amber)">${pend.length}</b><span>auditorías con algo por corregir</span></div>
       <div class="ax-kpi"><b>${sum("filas_pendientes")}</b><span>filas sin tildar</span></div>
       <div class="ax-kpi"><b>${sum("puntos_abiertos")}</b><span>puntos abiertos</span></div>
-      <div class="ax-kpi"><b>${sum("puntos_dennis")}</b><span>esperan a Dennis</span></div>
       <div class="ax-kpi"><b style="color:var(--menta)">${todas.length-pend.length}</b><span>auditorías OK</span></div>
     </div>
     <div class="ax-bar"><input id="ax-q" type="search" placeholder="Buscar empresa o bookkeeper…" value="${esc(A.q)}">
       <div class="ax-seg">${[["pend","Pendientes"],["todas","Todas"]].map(s=>`<button class="tab ${A.pver===s[0]?"active":""}" data-pv="${s[0]}">${s[1]}</button>`).join("")}</div></div>
     ${lista.length?`<div class="ax-scroll"><table class="audit-table ax-lista ax-pend"><thead><tr>
-      <th>Empresa</th><th>Bookkeeper</th><th>Auditoría</th><th>Filas corregidas</th><th>Puntos abiertos</th><th>Esperan a Dennis</th><th>Último tilde</th><th>Estado</th>
+      <th>Empresa</th><th>Bookkeeper</th><th>Auditoría</th><th>Filas corregidas</th><th>Puntos abiertos</th><th>Último tilde</th><th>Estado</th>
     </tr></thead><tbody>${lista.map(r=>{ const a=avanceDe(r), c=cli[r.cliente_id]||{}, ok=a.filas-a.filas_pendientes, pct=a.filas?Math.round(ok*100/a.filas):100;
       return `<tr class="ax-row" data-cid="${r.cliente_id}" data-run="${r.id}" title="Abrir la Revisión">
         <td data-label="Empresa"><b>${esc(c.nombre||"#"+r.cliente_id)}</b></td>
@@ -147,7 +146,6 @@ function renderPendientes(body){
         <td data-label="Auditoría">${fechaCorta(r.fecha)} <span class="muted">· ${esc(periodoTxt(r))}</span></td>
         <td data-label="Filas"><div class="rv-prog"><div class="rv-bar ax-mini"><i style="width:${pct}%"></i></div><span><b>${ok}</b> de ${a.filas}</span></div></td>
         <td class="tc" data-label="Puntos abiertos">${a.puntos_abiertos?`<b style="color:var(--amber)">${a.puntos_abiertos}</b> <span class="muted">de ${a.puntos}</span>`:`<span class="muted">0 de ${a.puntos}</span>`}</td>
-        <td class="tc" data-label="Esperan a Dennis">${a.puntos_dennis?`<b>${a.puntos_dennis}</b>`:'<span class="muted">—</span>'}</td>
         <td data-label="Último tilde">${a.ultimo_tilde?fechaCorta(String(a.ultimo_tilde).slice(0,10)):'<span class="muted">Sin empezar</span>'}</td>
         <td data-label="Estado">${pendiente(r)?'<span class="rv-est">Pendiente</span>':'<span class="rv-est ok">✔ OK</span>'}</td></tr>`; }).join("")}
     </tbody></table></div>`
@@ -246,7 +244,6 @@ const quien = ()=>localStorage.getItem("qb_aud_quien")||"";
 const money2 = (v)=>v==null||v===""?"":"$"+Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 const filasDe = (hid)=>(A.exp.correcciones||[]).filter(f=>f.hallazgo_id===hid);
 const hecha = (f)=>CORR_HECHAS.includes(f.estado);
-const bloqueado = (h)=>h.destino==="DEFINIR";
 function periodoRev(r){ const m=String(r.reporte_dennis||"").split("\n")[0].match(/Revisi[oó]n (.+)$/); return m?m[1].trim():periodoTxt(r); }
 
 function tabRevision(root){
@@ -273,7 +270,7 @@ function tabRevision(root){
         <div class="ax-seg">${[["todo","Todo"],["pend","Pendientes"],["ok","Resueltos"]].map(s=>`<button class="tab ${A.rfil===s[0]?"active":""}" data-rf="${s[0]}">${s[1]}</button>`).join("")}</div>
       </div>
     </div>
-    <div class="rr-note">Tildá cada fila cuando la corrijas en QuickBooks. Si la hiciste distinto o no corresponde, usá <b>⋯</b> y dejá la nota. Lo marcado <b>Definir con Dennis</b> se habilita cuando cargás su respuesta.</div>
+    <div class="rr-note">Tildá cada fila cuando la corrijas en QuickBooks. Si la hiciste distinto o no corresponde, usá <b>⋯</b> y dejá la nota. Lo marcado <b>Consultar con Dennis</b> se lo consultás y lo resolvés igual; con <b>📝</b> anotás lo que te dijo.</div>
     ${PASO_ORDEN.map(k=>{ const g=hs.filter(h=>(h.paso||"otros")===k&&vis(h)); if(!g.length) return "";
       return `<div class="rv-paso"><div class="rv-paso-tit">${k==="otros"?"Otros controles":`Paso ${esc(k)} · ${esc(PASOS_DENNIS[k]||"")}`}</div>${g.map(puntoCard).join("")}</div>`; }).join("")
       || `<div class="empty">Nada en este filtro.</div>`}
@@ -282,7 +279,7 @@ function tabRevision(root){
 }
 
 function puntoCard(h){
-  const fs=filasDe(h.id), ok=fs.filter(hecha).length, lock=bloqueado(h);
+  const fs=filasDe(h.id), ok=fs.filter(hecha).length;
   const marca=MARCA[h.destino];
   const est = h.estado==="Resuelto" ? `<span class="rv-est ok">✔ Resuelto${h.resuelto_fecha?` · ${fechaCorta(h.resuelto_fecha)}`:""}</span>`
     : h.estado==="Descartado" ? `<span class="rv-est off">Descartado</span>`
@@ -293,11 +290,10 @@ function puntoCard(h){
         ${marca?` <span class="rv-marca ${marca[1]}">${marca[0]}</span>`:""}</div>${est}</div>
     <div class="rv-txt"><div><b>Qué pasa:</b> ${esc(h.detalle||"—")}</div><div><b>Qué hacer:</b> ${esc(h.recomendacion||"—")}</div>
       ${h.respuesta_dennis?`<div class="rv-dennis"><b>Dennis:</b> ${esc(h.respuesta_dennis)}</div>`:""}</div>
-    ${lock?`<div class="rv-lock">⏸ Espera la definición de Dennis: no se toca hasta su respuesta. <button class="btn primary sm" data-dennis="${h.id}">Cargar respuesta de Dennis</button></div>`:""}
     ${fs.length?`<div class="ax-scroll"><table class="ip-table rv-tabla"><thead><tr><th>✓</th><th>Fecha</th><th>Num</th><th class="l">Payee</th><th class="r">Monto</th><th class="l">Está en</th><th class="l">Pasar a / qué hacer</th><th class="l">Estado</th><th></th></tr></thead><tbody>
       ${fs.map(f=>`<tr class="${hecha(f)?"rv-ok":""} ${f.estado==="Ya no aparece"?"rv-ya":""}">
         <td data-label="✓">${f.estado==="Pendiente"||f.estado==="Corregido"
-          ?`<input type="checkbox" class="rv-chk" data-fid="${f.id}" ${f.estado==="Corregido"?"checked":""} ${lock?"disabled":""} title="${lock?"Espera a Dennis":"Corregido"}">`
+          ?`<input type="checkbox" class="rv-chk" data-fid="${f.id}" ${f.estado==="Corregido"?"checked":""} title="Corregido">`
           :`<span class="rv-ico" title="${esc(f.estado)}">${CORR_ICONO[f.estado]}</span>`}</td>
         <td data-label="Fecha">${esc(f.fecha||"")}</td><td data-label="Num">${esc(f.num||"")}</td>
         <td class="l" data-label="Payee">${esc(f.payee||"")}${f.nueva?` <span class="rv-nueva" title="Apareció al volver a correr la auditoría">nueva</span>`:""}${f.origen==="Manual"?` <span class="rv-nueva man">a mano</span>`:""}</td>
@@ -309,8 +305,9 @@ function puntoCard(h){
         <td><button class="btn ghost sm" data-fmas="${f.id}" title="Hecho distinto, no corresponde, cambiar destino">⋯</button></td></tr>`).join("")}
     </tbody></table></div>`:""}
     <div class="rv-acts">
-      ${!lock?`<button class="btn ghost sm" data-fadd="${h.id}">+ Agregar fila</button>`:""}
-      ${!fs.length&&!lock?(HALL_ABIERTO(h)?`<button class="btn primary sm" data-hok="${h.id}">✔ Marcar resuelto</button>`:`<button class="btn ghost sm" data-hreab="${h.id}">Reabrir</button>`):""}
+      <button class="btn ghost sm" data-fadd="${h.id}">+ Agregar fila</button>
+      ${["DEFINIR","DEFINIDO"].includes(h.destino)?`<button class="btn ghost sm" data-dennis="${h.id}">📝 ${h.respuesta_dennis?"Editar":"Anotar"} lo que dijo Dennis</button>`:""}
+      ${!fs.length?(HALL_ABIERTO(h)?`<button class="btn primary sm" data-hok="${h.id}">✔ Marcar resuelto</button>`:`<button class="btn ghost sm" data-hreab="${h.id}">Reabrir</button>`):""}
     </div></div>`;
 }
 
@@ -325,14 +322,14 @@ function textoRespuesta(run, hs){
     L.push(`${err?"❌":"✅"} ${k}. ${PASOS_DENNIS[k]}${CAPTURA[k]?` → 📷 ${CAPTURA[k]}`:""}${g.length?`  (${refs(g)})`:""}`); });
   const otros=hs.filter(h=>(h.paso||"otros")==="otros"); if(otros.length) L.push(`❌ Otros controles  (${refs(otros)})`);
   L.push("","Capturas",...Object.keys(CAPTURA).map(k=>`[${k}. ${PASOS_DENNIS[k]}: pegar la captura acá]`));
-  const def=hs.filter(h=>h.destino==="DEFINIR"); if(def.length) L.push("","Para definir con vos",...def.map(h=>`• ${h.ref} ${h.titulo}: ${h.recomendacion||""}`));
-  const yaDef=hs.filter(h=>h.respuesta_dennis); if(yaDef.length) L.push("","Lo que definiste (aplicado)",...yaDef.map(h=>`• ${h.ref} ${h.titulo}: ${h.respuesta_dennis}`));
+  const def=hs.filter(h=>h.destino==="DEFINIR"&&HALL_ABIERTO(h)); if(def.length) L.push("","Para consultar con vos",...def.map(h=>`• ${h.ref} ${h.titulo}: ${h.recomendacion||""}`));
+  const yaDef=hs.filter(h=>h.respuesta_dennis); if(yaDef.length) L.push("","Lo que me dijiste (aplicado)",...yaDef.map(h=>`• ${h.ref} ${h.titulo}: ${h.respuesta_dennis}`));
   const cl=hs.filter(h=>h.destino==="CLIENTE"&&HALL_ABIERTO(h)); if(cl.length) L.push("","Pendiente del cliente",...cl.map(h=>`• ${h.ref} ${h.titulo}`));
   L.push("","Saludos,",quien()||"");
   return L.join("\n");
 }
 function respuestaCard(run, hs){
-  const falta=hs.filter(h=>HALL_ABIERTO(h)&&["AJUSTE","DEFINIDO","CONTROL",null,undefined].includes(h.destino));
+  const falta=hs.filter(h=>HALL_ABIERTO(h)&&["AJUSTE","DEFINIR","DEFINIDO","CONTROL",null,undefined].includes(h.destino));
   return `<div class="chart-card wide rv-resp"><h3>📨 Respuesta a Dennis <span class="muted">· su plantilla HECHA, armada con lo tildado</span>
       <button class="btn ghost sm" id="rv-copy">Copiar</button></h3>
     ${falta.length?`<div class="rv-falta">⚠ Faltan corregir ${falta.length} punto${falta.length===1?"":"s"}: ${falta.map(h=>`<a href="#rv-h${h.id}" class="rv-go" data-go="${h.id}">${esc(h.ref)}</a>`).join(", ")}. Salen como «pendiente» en la respuesta.</div>`
@@ -360,7 +357,7 @@ function editarFila(id){
   const ests=["Pendiente","Corregido","Hecho distinto","No corresponde"].concat(f.estado==="Ya no aparece"?["Ya no aparece"]:[]);
   openModal(`${h.ref} · ${f.payee||f.num||"Fila"}`,`
     <p class="muted">${esc([f.fecha,f.num,money2(f.monto),f.de].filter(Boolean).join(" · "))}</p>
-    <label>Estado</label><div class="rv-radios">${ests.map(e=>`<label><input type="radio" name="rv-e" value="${e}" ${e===f.estado?"checked":""} ${bloqueado(h)&&e!=="Pendiente"?"disabled":""}> ${CORR_ICONO[e]} ${e}</label>`).join("")}</div>
+    <label>Estado</label><div class="rv-radios">${ests.map(e=>`<label><input type="radio" name="rv-e" value="${e}" ${e===f.estado?"checked":""}> ${CORR_ICONO[e]} ${e}</label>`).join("")}</div>
     <label>Pasar a / qué hacer</label><input type="text" id="rv-a" value="${esc(f.a||"")}">
     <label>Nota <span class="muted">(obligatoria si es «Hecho distinto» o «No corresponde»)</span></label><textarea id="rv-n" rows="3" placeholder="Ej: 2082 → Commissions, confirmado con Dennis">${esc(f.nota||"")}</textarea>
     <div class="modal-actions">${f.origen==="Manual"?`<button class="btn ghost ax-danger" id="rv-del">Quitar fila</button>`:""}<button class="btn ghost" id="rv-cancel">Cancelar</button><button class="btn primary" id="rv-save">Guardar</button></div>`);
@@ -392,13 +389,13 @@ function agregarFila(hid){
 }
 function respuestaDennis(hid){
   const h=A.exp.hallazgos.find(x=>x.id===hid);
-  openModal(`${h.ref} · respuesta de Dennis`,`<p><b>${esc(h.titulo)}</b></p><p class="muted">${esc(h.recomendacion||"")}</p>
-    <label>Qué definió Dennis</label><textarea id="rd-txt" rows="4" placeholder="Ej: el #1913 es de diciembre 2025, cambiar la fecha a 12/31/2025">${esc(h.respuesta_dennis||"")}</textarea>
-    <p class="muted ax-small">Al guardar, el punto pasa a «Definido por Dennis» y se habilitan sus filas. Si cambia el destino de alguna, editala con ⋯.</p>
+  openModal(`${h.ref} · lo que dijo Dennis`,`<p><b>${esc(h.titulo)}</b></p><p class="muted">${esc(h.recomendacion||"")}</p>
+    <label>Qué dijo Dennis</label><textarea id="rd-txt" rows="4" placeholder="Ej: el #1913 es de diciembre 2025, cambiar la fecha a 12/31/2025">${esc(h.respuesta_dennis||"")}</textarea>
+    <p class="muted ax-small">Queda escrito en el punto. Si cambia adónde va alguna fila, editala con ⋯.</p>
     <div class="modal-actions"><button class="btn ghost" id="rd-cancel">Cancelar</button><button class="btn primary" id="rd-ok">Guardar</button></div>`);
   $("#rd-cancel").addEventListener("click",closeModal);
-  $("#rd-ok").addEventListener("click",async ()=>{ const t=$("#rd-txt").value.trim(); if(!t) return toast("Escribí lo que definió Dennis",true);
-    try{ await aapi("aud_hallazgo_save",{ id:hid, patch:{ respuesta_dennis:t } }); closeModal(); await recargarCliente(); toast("Respuesta de Dennis guardada ✓"); }
+  $("#rd-ok").addEventListener("click",async ()=>{ const t=$("#rd-txt").value.trim(); if(!t) return toast("Escribí lo que dijo Dennis",true);
+    try{ await aapi("aud_hallazgo_save",{ id:hid, patch:{ respuesta_dennis:t } }); closeModal(); await recargarCliente(); toast("Guardado ✓"); }
     catch(ex){ toast(ex.message,true); } });
 }
 function bindRevision(root, run){
