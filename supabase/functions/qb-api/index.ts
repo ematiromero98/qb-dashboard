@@ -119,13 +119,136 @@ const AUD_TIPOS = [
   'Reporte resumido', 'Reporte detallado', 'Reporte financiero', 'Mail al cliente', 'Informe', 'Papel de trabajo', 'Otro',
 ];
 const RUN_FIELDS = new Set(['tipo','periodo_desde','periodo_hasta','fecha','estado','semaforo','resumen','conclusiones','metricas','skill_version','auditor','reporte_dennis','mail_cliente']);
-const HALL_FIELDS = new Set(['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado','destino','en_resumen']);
-const HALL_INS = ['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado','destino','en_resumen'];
+const HALL_FIELDS = new Set(['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado','destino','en_resumen','paso','ref','orden','respuesta_dennis']);
+const HALL_INS = ['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado','destino','en_resumen','paso','ref','orden'];
 const HALL_ABIERTOS = ['Abierto', 'Repetido'];
 const MEM_FIELDS = new Set(['tema','contenido','estado','origen','control']);
 // Resultado de cada control del catálogo (qb_aud_controles).
 const CTRL_INS = ['codigo','modulo','control','paso_dennis','criterio','estado','detalle','fuente'];
 const CTRL_FIELDS = new Set(['estado','detalle','fuente']);
+// Revisión: transacciones a corregir de cada hallazgo (qb_aud_correcciones).
+const CORR_ESTADOS = ['Pendiente', 'Corregido', 'Hecho distinto', 'No corresponde', 'Ya no aparece'];
+const CORR_HECHAS = ['Corregido', 'Hecho distinto', 'No corresponde', 'Ya no aparece'];
+const CORR_CON_NOTA = ['Hecho distinto', 'No corresponde'];
+const norm = (v: unknown) => String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+// Reconoce la misma transacción al volver a correr la auditoría.
+const claveCorr = (c: any) => [c?.fecha, c?.num, c?.payee ?? c?.name, c?.monto == null || c?.monto === '' ? '' : Number(c.monto).toFixed(2)].map(norm).join('|');
+const quienDe = (q: unknown) => String(q ?? '').trim().slice(0, 60) || null;
+const hoy = () => new Date().toISOString().slice(0, 10);
+const numOrNull = (v: unknown) => (v == null || v === '' || isNaN(Number(v)) ? null : Number(v));
+
+function filaCorr(h: any, c: any, orden: number, extra: Record<string, unknown> = {}) {
+  return {
+    hallazgo_id: h.id, run_id: h.run_id, cliente_id: h.cliente_id, orden,
+    clave: claveCorr(c), fecha: c?.fecha || null, num: c?.num || null, payee: c?.payee ?? c?.name ?? null,
+    monto: numOrNull(c?.monto), de: c?.de || null, a: c?.a || null, ...extra,
+  };
+}
+
+// Un hallazgo con filas pasa a Resuelto cuando todas están resueltas, y vuelve
+// a Abierto si alguna se reabre. Descartado no se toca. Sin filas: a mano.
+async function recalcHallazgo(hid: number) {
+  const [{ data: h }, { data: rows }] = await Promise.all([
+    db.from('qb_aud_hallazgos').select('id, estado').eq('id', hid).maybeSingle(),
+    db.from('qb_aud_correcciones').select('estado').eq('hallazgo_id', hid),
+  ]);
+  if (!h || !rows?.length || h.estado === 'Descartado') return h;
+  const listo = rows.every((r: any) => CORR_HECHAS.includes(r.estado));
+  let patch: Record<string, unknown> | null = null;
+  if (listo && HALL_ABIERTOS.includes(h.estado)) patch = { estado: 'Resuelto', resuelto_fecha: hoy() };
+  else if (!listo && h.estado === 'Resuelto') patch = { estado: 'Abierto', resuelto_fecha: null, resuelto_run_id: null };
+  if (!patch) return h;
+  const { data } = await db.from('qb_aud_hallazgos').update(patch).eq('id', hid).select().single();
+  return data;
+}
+
+// Hallazgos nuevos de una auditoría, con sus filas a corregir.
+async function insertarHallazgos(run: any, hs: any[], nueva = false) {
+  for (const h of hs) {
+    const o: Record<string, unknown> = { run_id: run.id, cliente_id: run.cliente_id };
+    for (const k of HALL_INS) o[k] = h?.[k] ?? null;
+    o.severidad = o.severidad || 'Media';
+    o.estado = o.estado || 'Abierto';
+    o.en_resumen = o.en_resumen === true;
+    const { data: nh, error } = await db.from('qb_aud_hallazgos').insert(o).select().single();
+    if (error) throw error;
+    const cs = Array.isArray(h?.correcciones) ? h.correcciones : [];
+    if (cs.length) {
+      const { error: e2 } = await db.from('qb_aud_correcciones').insert(cs.map((c: any, i: number) => filaCorr(nh, c, i, { nueva })));
+      if (e2) throw e2;
+    }
+  }
+}
+
+// Volver a correr una auditoría sin perder lo tildado: cada hallazgo nuevo se
+// empareja con el anterior (código + título, si no código + número, si no el
+// único con ese código) y se actualiza en el lugar; sus filas se reconocen por
+// la clave y conservan estado, nota, quién y cuándo. Una fila que ya no viene
+// queda «Ya no aparece» (si estaba pendiente); una nueva entra marcada nueva.
+// Un hallazgo anterior que ya no aparece pasa a Resuelto. Las filas manuales
+// no se tocan.
+async function sincronizarHallazgos(run: any, hs: any[]) {
+  const [{ data: viejos, error: e1 }, { data: filas, error: e2 }] = await Promise.all([
+    db.from('qb_aud_hallazgos').select('*').eq('run_id', run.id).order('id'),
+    db.from('qb_aud_correcciones').select('*').eq('run_id', run.id).order('orden'),
+  ]);
+  if (e1) throw e1;
+  if (e2) throw e2;
+  const usados = new Set<number>();
+  const libres = () => (viejos ?? []).filter((v: any) => !usados.has(v.id));
+  const pares: [any, any][] = [];
+  const sinPar: any[] = [];
+  for (const h of hs) {
+    let v = libres().find((x: any) => x.codigo === h.codigo && norm(x.titulo) === norm(h.titulo))
+      ?? (h.ref ? libres().find((x: any) => x.codigo === h.codigo && x.ref && x.ref === h.ref) : undefined);
+    if (!v) {
+      const mismos = libres().filter((x: any) => x.codigo === h.codigo);
+      if (mismos.length === 1 && hs.filter((y: any) => y.codigo === h.codigo).length === 1) v = mismos[0];
+    }
+    if (v) { usados.add(v.id); pares.push([v, h]); } else sinPar.push(h);
+  }
+  for (const [v, h] of pares) {
+    const patch: Record<string, unknown> = {};
+    for (const k of HALL_INS) if (!['estado', 'en_resumen', 'severidad'].includes(k)) patch[k] = h?.[k] ?? null;
+    if (v.respuesta_dennis) delete patch.destino; // lo que definió Dennis manda
+    const { error } = await db.from('qb_aud_hallazgos').update(patch).eq('id', v.id);
+    if (error) throw error;
+    const mias = (filas ?? []).filter((f: any) => f.hallazgo_id === v.id);
+    // Si el hallazgo todavía no tenía filas (se guardó antes de la Revisión), las de ahora no son «nuevas».
+    const primera = !mias.some((x: any) => x.origen === 'Auditoría');
+    const tomadas = new Set<number>();
+    const cs = Array.isArray(h?.correcciones) ? h.correcciones : [];
+    for (let i = 0; i < cs.length; i++) {
+      const c = cs[i], k = claveCorr(c);
+      const f = mias.find((x: any) => !tomadas.has(x.id) && x.origen === 'Auditoría' && x.clave === k);
+      if (f) {
+        tomadas.add(f.id);
+        const p: Record<string, unknown> = { orden: i, fecha: c.fecha || null, num: c.num || null, payee: c.payee ?? c.name ?? null,
+          monto: numOrNull(c.monto), de: c.de || null, actualizado_at: new Date().toISOString() };
+        if (!f.a_editado) p.a = c.a || null;
+        if (f.estado === 'Ya no aparece') p.estado = 'Pendiente';
+        const { error: e } = await db.from('qb_aud_correcciones').update(p).eq('id', f.id);
+        if (e) throw e;
+      } else {
+        const { error: e } = await db.from('qb_aud_correcciones').insert(filaCorr(v, c, i, { nueva: !primera }));
+        if (e) throw e;
+      }
+    }
+    const ya = mias.filter((x: any) => !tomadas.has(x.id) && x.origen === 'Auditoría' && x.estado === 'Pendiente').map((x: any) => x.id);
+    if (ya.length) {
+      const { error: e } = await db.from('qb_aud_correcciones').update({ estado: 'Ya no aparece', actualizado_at: new Date().toISOString() }).in('id', ya);
+      if (e) throw e;
+    }
+    await recalcHallazgo(v.id);
+  }
+  const fuera = libres().filter((v: any) => HALL_ABIERTOS.includes(v.estado)).map((v: any) => v.id);
+  if (fuera.length) {
+    const { error } = await db.from('qb_aud_hallazgos').update({ estado: 'Resuelto', resuelto_fecha: hoy(), resuelto_run_id: run.id }).in('id', fuera);
+    if (error) throw error;
+  }
+  await insertarHallazgos(run, sinPar, true);
+  return { actualizados: pares.length, nuevos: sinPar.length, ya_no_aparecen: fuera.length };
+}
 // Estados de la auditoría que cuentan como hecha en la agenda.
 const RUN_HECHA = ['Enviada a Dennis', 'Hecho', 'Cerrada'];
 
@@ -339,16 +462,18 @@ Deno.serve(async (req) => {
       case 'aud_cliente': {
         const cid = Number(body.cliente_id);
         if (!cid) return json({ error: 'falta cliente_id' }, 400);
-        const [runs, archivos, hallazgos, memoria, notas, controles] = await Promise.all([
+        const [runs, archivos, hallazgos, memoria, notas, controles, correcciones] = await Promise.all([
           db.from('qb_aud_runs').select('*').eq('cliente_id', cid).order('fecha', { ascending: false }).order('id', { ascending: false }),
           db.from('qb_aud_archivos').select('*').eq('cliente_id', cid).order('id'),
           db.from('qb_aud_hallazgos').select('*').eq('cliente_id', cid).order('id'),
           db.from('qb_aud_memoria').select('*').eq('cliente_id', cid).order('tema').order('id'),
           db.from('qb_aud_notas').select('*').eq('cliente_id', cid).order('fecha', { ascending: false }).order('id', { ascending: false }),
           db.from('qb_aud_controles').select('*').eq('cliente_id', cid).order('codigo'),
+          db.from('qb_aud_correcciones').select('*').eq('cliente_id', cid).order('hallazgo_id').order('orden').order('id'),
         ]);
-        for (const r of [runs, archivos, hallazgos, memoria, notas, controles]) if (r.error) throw r.error;
-        return json({ runs: runs.data, archivos: archivos.data, hallazgos: hallazgos.data, memoria: memoria.data, notas: notas.data, controles: controles.data });
+        for (const r of [runs, archivos, hallazgos, memoria, notas, controles, correcciones]) if (r.error) throw r.error;
+        return json({ runs: runs.data, archivos: archivos.data, hallazgos: hallazgos.data, memoria: memoria.data, notas: notas.data,
+          controles: controles.data, correcciones: correcciones.data });
       }
 
       // Alta (sin id) o edición de una auditoría. Opcionales, para que el
@@ -379,17 +504,17 @@ Deno.serve(async (req) => {
           if (error) throw error;
           run = data;
         }
-        if (hs.length) {
-          const rows = hs.map((h: any) => {
-            const o: Record<string, unknown> = { run_id: run.id, cliente_id: run.cliente_id };
-            for (const k of HALL_INS) o[k] = h?.[k] ?? null;
-            o.severidad = o.severidad || 'Media';
-            o.estado = o.estado || 'Abierto';
-            o.en_resumen = o.en_resumen === true;
-            return o;
-          });
-          const { error } = await db.from('qb_aud_hallazgos').insert(rows);
-          if (error) throw error;
+        // Con `sincronizar` (volver a correr una auditoría ya guardada) los
+        // hallazgos se actualizan en el lugar y se conserva lo tildado; si no,
+        // se agregan.
+        let sync = null;
+        if (body.id && body.sincronizar === true) sync = await sincronizarHallazgos(run, hs);
+        else if (hs.length) await insertarHallazgos(run, hs);
+        if (ms.length) {
+          // No duplicar lo que ya está en la memoria del cliente.
+          const { data: ya } = await db.from('qb_aud_memoria').select('contenido').eq('cliente_id', run.cliente_id);
+          const hay = new Set((ya ?? []).map((m: any) => norm(m.contenido)));
+          ms.splice(0, ms.length, ...ms.filter((m: any) => !hay.has(norm(m.contenido))));
         }
         if (ms.length) {
           const rows = ms.map((m: any) => ({
@@ -417,7 +542,7 @@ Deno.serve(async (req) => {
             .eq('id', hid).eq('cliente_id', run.cliente_id);
         }
         await marcarAgenda(run);
-        return json({ ok: true, run });
+        return json({ ok: true, run, sync });
       }
 
       // Borra una auditoría con sus archivos (bucket) y hallazgos.
@@ -433,11 +558,70 @@ Deno.serve(async (req) => {
       case 'aud_hallazgo_save': {
         const patch: Record<string, unknown> = clean(body.patch, HALL_FIELDS);
         if (!body.id || !Object.keys(patch).length) return json({ error: 'nada para actualizar' }, 400);
+        // Respuesta de Dennis a un punto «Definir con Dennis»: queda definido y se habilitan sus filas.
+        if (typeof patch.respuesta_dennis === 'string' && patch.respuesta_dennis.trim()) {
+          const { data: cur } = await db.from('qb_aud_hallazgos').select('destino').eq('id', body.id).maybeSingle();
+          if (cur?.destino === 'DEFINIR' && !patch.destino) patch.destino = 'DEFINIDO';
+        }
         if (HALL_ABIERTOS.includes(String(patch.estado))) { patch.resuelto_fecha = null; patch.resuelto_run_id = null; }
         else if (patch.estado) patch.resuelto_fecha = body.patch.resuelto_fecha || new Date().toISOString().slice(0, 10);
         const { data, error } = await db.from('qb_aud_hallazgos').update(patch).eq('id', body.id).select().single();
         if (error) throw error;
         return json({ ok: true, hallazgo: data });
+      }
+
+      // ── Revisión: tildar, agregar y quitar transacciones a corregir ──
+      // Cada cambio de estado guarda quién (lo que escribió la persona en la
+      // pestaña) y cuándo, y recalcula el estado del hallazgo.
+      case 'aud_correccion_save': {
+        const { data: f } = await db.from('qb_aud_correcciones').select('*').eq('id', body.id).maybeSingle();
+        if (!f) return json({ error: 'fila no encontrada' }, 404);
+        const p = body.patch ?? {};
+        const patch: Record<string, unknown> = { actualizado_at: new Date().toISOString() };
+        if (p.nota !== undefined) patch.nota = String(p.nota ?? '').trim() || null;
+        if (p.a !== undefined) { patch.a = String(p.a ?? '').trim() || null; patch.a_editado = true; }
+        if (p.estado !== undefined) {
+          if (!CORR_ESTADOS.includes(p.estado)) return json({ error: 'estado inválido' }, 400);
+          const nota = patch.nota !== undefined ? patch.nota : f.nota;
+          if (CORR_CON_NOTA.includes(p.estado) && !nota) return json({ error: `«${p.estado}» necesita una nota que diga qué se hizo o por qué` }, 400);
+          if (p.estado !== 'Pendiente') {
+            const { data: h } = await db.from('qb_aud_hallazgos').select('destino').eq('id', f.hallazgo_id).maybeSingle();
+            if (h?.destino === 'DEFINIR') return json({ error: 'Este punto espera la definición de Dennis: cargá su respuesta primero' }, 400);
+          }
+          if (p.estado !== f.estado) {
+            patch.estado = p.estado;
+            patch.hecho_por = p.estado === 'Pendiente' ? null : quienDe(body.quien);
+            patch.hecho_at = p.estado === 'Pendiente' ? null : new Date().toISOString();
+          }
+        }
+        const { data, error } = await db.from('qb_aud_correcciones').update(patch).eq('id', f.id).select().single();
+        if (error) throw error;
+        const hallazgo = await recalcHallazgo(f.hallazgo_id);
+        return json({ ok: true, fila: data, hallazgo });
+      }
+
+      case 'aud_correccion_add': {
+        const { data: h } = await db.from('qb_aud_hallazgos').select('id, run_id, cliente_id').eq('id', body.hallazgo_id).maybeSingle();
+        if (!h) return json({ error: 'hallazgo no encontrado' }, 404);
+        const c = body.fila ?? {};
+        if (!String(c.payee ?? '').trim() && !String(c.num ?? '').trim() && !String(c.a ?? '').trim()) return json({ error: 'completá al menos payee, número o qué hacer' }, 400);
+        const { data: ult } = await db.from('qb_aud_correcciones').select('orden').eq('hallazgo_id', h.id).order('orden', { ascending: false }).limit(1);
+        const fila = filaCorr(h, c, (ult?.[0]?.orden ?? -1) + 1, { origen: 'Manual', a_editado: true, nota: String(c.nota ?? '').trim() || null,
+          hecho_por: null });
+        const { data, error } = await db.from('qb_aud_correcciones').insert(fila).select().single();
+        if (error) throw error;
+        const hallazgo = await recalcHallazgo(h.id);
+        return json({ ok: true, fila: data, hallazgo });
+      }
+
+      case 'aud_correccion_del': {
+        const { data: f } = await db.from('qb_aud_correcciones').select('id, hallazgo_id, origen').eq('id', body.id).maybeSingle();
+        if (!f) return json({ ok: true });
+        if (f.origen !== 'Manual') return json({ error: 'Solo se pueden quitar las filas agregadas a mano; usá «No corresponde»' }, 400);
+        const { error } = await db.from('qb_aud_correcciones').delete().eq('id', f.id);
+        if (error) throw error;
+        const hallazgo = await recalcHallazgo(f.hallazgo_id);
+        return json({ ok: true, hallazgo });
       }
 
       // Corrección manual del resultado de un control (queda marcado editado).

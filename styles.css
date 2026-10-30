@@ -642,3 +642,48 @@ td.saving{opacity:.5}
   .ax-ctrl tr.ax-mod td{display:block}
   .ax-hall td.r{justify-content:space-between}
 }
+
+/* ===== Expedientes · Revisión (qué corregir, fila por fila) ===== */
+.rv-top{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.rv-top-l{flex:1;min-width:260px}.rv-top-r{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.rv-tit{font-weight:700;font-size:15px;margin-bottom:8px}
+.rv-prog{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--muted)}.rv-prog b{color:var(--txt)}
+.rv-bar{flex:0 0 220px;height:8px;background:var(--line);border-radius:99px;overflow:hidden}
+.rv-bar i{display:block;height:100%;background:var(--menta);border-radius:99px;transition:width .3s}
+#rv-quien{width:170px}
+.rv-paso{margin:18px 0 6px}
+.rv-paso-tit{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--menta);padding:6px 2px;border-bottom:1px solid var(--line2);margin-bottom:10px}
+.rv-punto{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--amber);border-radius:var(--r);padding:12px 14px;margin-bottom:10px;scroll-margin-top:12px}
+.rv-punto.cerrado{border-left-color:var(--menta);opacity:.78}
+.rv-head{display:flex;align-items:flex-start;gap:10px}
+.rv-ref{font:700 13px ui-monospace,Consolas,monospace;background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:2px 7px;color:var(--txt);white-space:nowrap}
+.rv-h-tit{flex:1;font-size:14px;line-height:1.4}
+.rv-marca{font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;border:1px solid;white-space:nowrap}
+.rv-marca.def{color:var(--violet);border-color:var(--violet)}.rv-marca.cli{color:var(--blue);border-color:var(--blue)}
+.rv-marca.cie{color:var(--muted);border-color:var(--line2)}.rv-marca.ok{color:var(--menta);border-color:var(--menta)}
+.rv-est{font-size:12px;color:var(--amber);white-space:nowrap;font-weight:600}.rv-est.ok{color:var(--menta)}.rv-est.off{color:var(--muted)}
+.rv-txt{font-size:13px;color:var(--muted);margin:8px 0 4px 2px;line-height:1.5}.rv-txt b{color:var(--txt)}
+.rv-dennis{margin-top:4px;color:var(--violet)}.rv-dennis b{color:var(--violet)}
+.rv-lock{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:rgba(185,139,255,.08);border:1px dashed var(--violet);color:var(--txt);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:13px}
+.rv-tabla td,.rv-tabla th{font-size:12.5px}
+.rv-tabla tr.rv-ok td{color:var(--muted)}.rv-tabla tr.rv-ok td:nth-child(4){text-decoration:line-through}
+.rv-tabla tr.rv-ya td{color:var(--muted2);font-style:italic}
+.rv-chk{width:17px;height:17px;accent-color:var(--menta);cursor:pointer}
+.rv-ico{font-weight:700;color:var(--menta)}
+.rv-quien{font-size:11.5px;color:var(--muted);max-width:220px}.rv-nota{color:var(--txt);margin-top:2px}
+.rv-nueva{font-size:10px;font-weight:700;color:var(--cyan);border:1px solid var(--cyan);border-radius:99px;padding:0 6px}
+.rv-nueva.man{color:var(--pink);border-color:var(--pink)}
+.rv-acts{display:flex;gap:8px;margin-top:8px}
+.rv-radios{display:flex;flex-direction:column;gap:6px;margin:4px 0 10px}.rv-radios label{display:flex;gap:8px;align-items:center;font-weight:400}
+.rv-resp{margin-top:20px}.rv-resp h3{display:flex;align-items:center;gap:10px}.rv-resp h3 .btn{margin-left:auto}
+.rv-falta{background:rgba(255,178,62,.1);border:1px solid var(--amber);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:13px}
+.rv-falta a{color:var(--amber);font-weight:700}
+.rv-listo{color:var(--menta);font-size:13px;margin:8px 0}
+@media(max-width:760px){
+  .rv-bar{flex-basis:120px}.rv-top-r{width:100%}#rv-quien{width:100%}
+  .rv-tabla thead{display:none}.rv-tabla tr{display:block;border-bottom:1px solid var(--line2);padding:6px 0}
+  .rv-tabla td{display:flex;justify-content:space-between;gap:10px;border:0;padding:3px 4px;text-align:right}
+  .rv-tabla td::before{content:attr(data-label);color:var(--muted);font-size:11px;text-align:left}
+}
+#modal-body .rv-radios label{display:flex;flex-direction:row;gap:8px;align-items:center;margin:0;font-size:13px;color:var(--txt);cursor:pointer}
+#modal-body .rv-radios input[type=radio]{width:auto;margin:0;accent-color:var(--menta)}
