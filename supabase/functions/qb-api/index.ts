@@ -119,8 +119,8 @@ const AUD_TIPOS = [
   'Reporte resumido', 'Reporte detallado', 'Reporte financiero', 'Mail al cliente', 'Informe', 'Papel de trabajo', 'Otro',
 ];
 const RUN_FIELDS = new Set(['tipo','periodo_desde','periodo_hasta','fecha','estado','semaforo','resumen','conclusiones','metricas','skill_version','auditor','reporte_dennis','mail_cliente']);
-const HALL_FIELDS = new Set(['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado','destino','en_resumen','paso','ref','orden','respuesta_dennis']);
-const HALL_INS = ['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado','destino','en_resumen','paso','ref','orden'];
+const HALL_FIELDS = new Set(['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado','destino','en_resumen','paso','ref','orden','respuesta_dennis','mail_texto']);
+const HALL_INS = ['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado','destino','en_resumen','paso','ref','orden','mail_texto'];
 const HALL_ABIERTOS = ['Abierto', 'Repetido'];
 const MEM_FIELDS = new Set(['tema','contenido','estado','origen','control']);
 // Resultado de cada control del catálogo (qb_aud_controles).
@@ -160,6 +160,32 @@ async function recalcHallazgo(hid: number) {
   if (!patch) return h;
   const { data } = await db.from('qb_aud_hallazgos').update(patch).eq('id', hid).select().single();
   return data;
+}
+
+// Historial de correcciones. Si falla no frena la corrección: queda en el log de la función.
+const FOTO_TIPOS = ['QuickBooks', 'Extracto', 'Correccion'];
+const filaTxt = (f: any) => [f?.fecha, f?.num, f?.payee].filter(Boolean).join(' · ');
+async function registrar(o: Record<string, unknown>) {
+  const { data, error } = await db.from('qb_aud_log').insert(o).select().single();
+  if (error) { console.error('qb-api registrar:', error); return null; }
+  return data;
+}
+async function registrarFila(f: any, accion: string, quien: unknown, nota?: unknown) {
+  const { data: h } = await db.from('qb_aud_hallazgos').select('ref').eq('id', f.hallazgo_id).maybeSingle();
+  return registrar({ cliente_id: f.cliente_id, run_id: f.run_id, hallazgo_id: f.hallazgo_id, correccion_id: f.id, ref: h?.ref ?? null,
+    fila: filaTxt(f), monto: f.monto, accion, nota: nota ?? null, quien: quienDe(quien) });
+}
+// Las fotos se ven con URLs firmadas por 1 hora. Si la firma falla, el expediente abre igual.
+async function firmarFotos(rows: any[]) {
+  if (!rows.length) return rows;
+  try {
+    const d = await storage('POST', `object/sign/${AUD_BUCKET}`, { expiresIn: 3600, paths: rows.map((r) => r.storage_path) });
+    const urls = new Map((Array.isArray(d) ? d : []).map((x: any) => [x.path, x.signedURL]));
+    return rows.map((r) => ({ ...r, url: urls.get(r.storage_path) ? `${SB_URL}/storage/v1${urls.get(r.storage_path)}` : null }));
+  } catch (e) {
+    console.error('qb-api firmarFotos:', e);
+    return rows.map((r) => ({ ...r, url: null }));
+  }
 }
 
 // Hallazgos nuevos de una auditoría, con sus filas a corregir.
@@ -209,7 +235,8 @@ async function sincronizarHallazgos(run: any, hs: any[]) {
   }
   for (const [v, h] of pares) {
     const patch: Record<string, unknown> = {};
-    for (const k of HALL_INS) if (!['estado', 'en_resumen', 'severidad'].includes(k)) patch[k] = h?.[k] ?? null;
+    for (const k of HALL_INS) if (!['estado', 'en_resumen', 'severidad', 'mail_texto'].includes(k)) patch[k] = h?.[k] ?? null;
+    if (h?.mail_texto && !v.mail_texto) patch.mail_texto = h.mail_texto; // lo que se editó a mano no se pisa
     if (v.respuesta_dennis) delete patch.destino; // lo que definió Dennis manda
     const { error } = await db.from('qb_aud_hallazgos').update(patch).eq('id', v.id);
     if (error) throw error;
@@ -466,7 +493,7 @@ Deno.serve(async (req) => {
       case 'aud_cliente': {
         const cid = Number(body.cliente_id);
         if (!cid) return json({ error: 'falta cliente_id' }, 400);
-        const [runs, archivos, hallazgos, memoria, notas, controles, correcciones] = await Promise.all([
+        const [runs, archivos, hallazgos, memoria, notas, controles, correcciones, fotos, log] = await Promise.all([
           db.from('qb_aud_runs').select('*').eq('cliente_id', cid).order('fecha', { ascending: false }).order('id', { ascending: false }),
           db.from('qb_aud_archivos').select('*').eq('cliente_id', cid).order('id'),
           db.from('qb_aud_hallazgos').select('*').eq('cliente_id', cid).order('id'),
@@ -474,10 +501,12 @@ Deno.serve(async (req) => {
           db.from('qb_aud_notas').select('*').eq('cliente_id', cid).order('fecha', { ascending: false }).order('id', { ascending: false }),
           db.from('qb_aud_controles').select('*').eq('cliente_id', cid).order('codigo'),
           db.from('qb_aud_correcciones').select('*').eq('cliente_id', cid).order('hallazgo_id').order('orden').order('id'),
+          db.from('qb_aud_fotos').select('*').eq('cliente_id', cid).order('id'),
+          db.from('qb_aud_log').select('*').eq('cliente_id', cid).order('creado_at', { ascending: false }).order('id', { ascending: false }),
         ]);
-        for (const r of [runs, archivos, hallazgos, memoria, notas, controles, correcciones]) if (r.error) throw r.error;
+        for (const r of [runs, archivos, hallazgos, memoria, notas, controles, correcciones, fotos, log]) if (r.error) throw r.error;
         return json({ runs: runs.data, archivos: archivos.data, hallazgos: hallazgos.data, memoria: memoria.data, notas: notas.data,
-          controles: controles.data, correcciones: correcciones.data });
+          controles: controles.data, correcciones: correcciones.data, fotos: await firmarFotos(fotos.data ?? []), log: log.data });
       }
 
       // Alta (sin id) o edición de una auditoría. Opcionales, para que el
@@ -552,7 +581,8 @@ Deno.serve(async (req) => {
       // Borra una auditoría con sus archivos (bucket) y hallazgos.
       case 'aud_run_del': {
         const { data: arch } = await db.from('qb_aud_archivos').select('storage_path').eq('run_id', body.id);
-        const paths = (arch ?? []).map((a: any) => a.storage_path);
+        const { data: fts } = await db.from('qb_aud_fotos').select('storage_path').eq('run_id', body.id);
+        const paths = [...(arch ?? []), ...(fts ?? [])].map((a: any) => a.storage_path);
         if (paths.length) await storage('DELETE', `object/${AUD_BUCKET}`, { prefixes: paths });
         const { error } = await db.from('qb_aud_runs').delete().eq('id', body.id);
         if (error) throw error;
@@ -569,8 +599,13 @@ Deno.serve(async (req) => {
         }
         if (HALL_ABIERTOS.includes(String(patch.estado))) { patch.resuelto_fecha = null; patch.resuelto_run_id = null; }
         else if (patch.estado) patch.resuelto_fecha = body.patch.resuelto_fecha || new Date().toISOString().slice(0, 10);
+        const { data: antes } = await db.from('qb_aud_hallazgos').select('estado').eq('id', body.id).maybeSingle();
         const { data, error } = await db.from('qb_aud_hallazgos').update(patch).eq('id', body.id).select().single();
         if (error) throw error;
+        if (patch.estado && antes?.estado !== patch.estado) {
+          await registrar({ cliente_id: data.cliente_id, run_id: data.run_id, hallazgo_id: data.id, ref: data.ref, fila: data.titulo,
+            monto: data.monto, accion: `Punto ${String(patch.estado).toLowerCase()}`, quien: quienDe(body.quien) });
+        }
         return json({ ok: true, hallazgo: data });
       }
 
@@ -597,7 +632,8 @@ Deno.serve(async (req) => {
         const { data, error } = await db.from('qb_aud_correcciones').update(patch).eq('id', f.id).select().single();
         if (error) throw error;
         const hallazgo = await recalcHallazgo(f.hallazgo_id);
-        return json({ ok: true, fila: data, hallazgo });
+        const log = patch.estado ? await registrarFila(data, p.estado === 'Pendiente' ? 'Volvió a pendiente' : p.estado, body.quien, data.nota) : null;
+        return json({ ok: true, fila: data, hallazgo, log });
       }
 
       case 'aud_correccion_add': {
@@ -618,6 +654,8 @@ Deno.serve(async (req) => {
         const { data: f } = await db.from('qb_aud_correcciones').select('id, hallazgo_id, origen').eq('id', body.id).maybeSingle();
         if (!f) return json({ ok: true });
         if (f.origen !== 'Manual') return json({ error: 'Solo se pueden quitar las filas agregadas a mano; usá «No corresponde»' }, 400);
+        const { data: fts } = await db.from('qb_aud_fotos').select('storage_path').eq('correccion_id', f.id);
+        if (fts?.length) await storage('DELETE', `object/${AUD_BUCKET}`, { prefixes: fts.map((x: any) => x.storage_path) });
         const { error } = await db.from('qb_aud_correcciones').delete().eq('id', f.id);
         if (error) throw error;
         const hallazgo = await recalcHallazgo(f.hallazgo_id);
@@ -701,6 +739,51 @@ Deno.serve(async (req) => {
         }).select().single();
         if (error) throw error;
         return json({ ok: true, archivo: data });
+      }
+
+      // Fotos: las del mail al cliente van por punto y tipo (QuickBooks / Extracto);
+      // las de lo corregido, por fila. Se suben igual que los archivos, en 2 pasos.
+      case 'aud_foto_url': {
+        const { data: run } = await db.from('qb_aud_runs').select('id, cliente_id').eq('id', body.run_id).maybeSingle();
+        if (!run) return json({ error: 'auditoría inexistente' }, 404);
+        const path = `${run.cliente_id}/${run.id}/fotos/${Date.now()}-${nombreSeguro(body.nombre)}`;
+        const d = await storage('POST', `object/upload/sign/${AUD_BUCKET}/${encPath(path)}`);
+        return json({ ok: true, path, url: `${SB_URL}/storage/v1${d.url}` });
+      }
+
+      case 'aud_foto_add': {
+        const { data: run } = await db.from('qb_aud_runs').select('id, cliente_id').eq('id', body.run_id).maybeSingle();
+        if (!run) return json({ error: 'auditoría inexistente' }, 404);
+        const path = String(body.path ?? '');
+        if (!path.startsWith(`${run.cliente_id}/${run.id}/fotos/`)) return json({ error: 'ruta inválida' }, 400);
+        if (!FOTO_TIPOS.includes(body.tipo)) return json({ error: 'tipo inválido' }, 400);
+        if (!String(body.mime ?? '').startsWith('image/')) return json({ error: 'Tiene que ser una imagen' }, 400);
+        const hallazgo_id = Number(body.hallazgo_id) || null, correccion_id = Number(body.correccion_id) || null;
+        if (body.tipo === 'Correccion' ? !correccion_id : !hallazgo_id) return json({ error: 'faltan datos' }, 400);
+        const { data, error } = await db.from('qb_aud_fotos').insert({
+          cliente_id: run.cliente_id, run_id: run.id, hallazgo_id, correccion_id, tipo: body.tipo,
+          nombre: String(body.nombre ?? '').trim() || path.split('/').pop(), storage_path: path,
+          bytes: Number(body.bytes) || null, mime: body.mime, subido_por: quienDe(body.quien),
+        }).select().single();
+        if (error) throw error;
+        if (correccion_id) {
+          const { data: f } = await db.from('qb_aud_correcciones').select('*').eq('id', correccion_id).maybeSingle();
+          if (f) await registrarFila(f, 'Foto agregada', body.quien);
+        }
+        const [foto] = await firmarFotos([data]);
+        return json({ ok: true, foto });
+      }
+
+      case 'aud_foto_del': {
+        const { data: a } = await db.from('qb_aud_fotos').select('*').eq('id', body.id).maybeSingle();
+        if (!a) return json({ ok: true });
+        await storage('DELETE', `object/${AUD_BUCKET}`, { prefixes: [a.storage_path] });
+        await db.from('qb_aud_fotos').delete().eq('id', a.id);
+        if (a.correccion_id) {
+          const { data: f } = await db.from('qb_aud_correcciones').select('*').eq('id', a.correccion_id).maybeSingle();
+          if (f) await registrarFila(f, 'Foto quitada', body.quien);
+        }
+        return json({ ok: true });
       }
 
       // URL de descarga firmada, válida 5 minutos.
