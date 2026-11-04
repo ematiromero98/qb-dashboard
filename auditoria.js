@@ -14,7 +14,7 @@ const HALL_ABIERTO = (h)=>h.estado==="Abierto"||h.estado==="Repetido";
 const DESTINOS = ["AJUSTE","CLIENTE","CIERRE ANUAL","DEFINIR","DEFINIDO","CONTROL"];
 const CTRL_ESTADOS = ["OK","DIFERENCIA","SIN DATO","N/A","Pendiente"];
 const MODULOS = { A:"A · Insumos y calidad de datos", B:"B · Conciliaciones", C:"C · P&L", D:"D · Diario y memos", E:"E · Activos", F:"F · Clasificación", G:"G · Red flags y gobierno" };
-const A = { pin:"", view:"lista", cid:null, tab:"revision", runs:[], abiertos:[], exp:null, cfil:"todos", rrun:null, rfil:"pend", rvis:"corregir", rab:new Set(), lv:"empresas", avance:[], hq:"",
+const A = { pin:"", view:"lista", cid:null, tab:"revision", runs:[], abiertos:[], exp:null, cfil:"todos", rrun:null, rfil:"pend", rvis:"corregir", rab:new Set(), rmodo:false, lv:"empresas", avance:[], hq:"",
   ff:{ empresas:{}, pend:{ estado:"Pendiente" } }, tb:{ empresas:{ sort:null, fil:{} }, pend:{ sort:null, fil:{} } } };
 // Revisión: los pasos de Dennis (mismos textos que la plantilla «Revisión … – HECHA» del skill).
 const PASOS_DENNIS = { "0":"Repetidos y cambios de reglas de la Nota anterior: hechos", "1":"Misc ≈ $0",
@@ -546,18 +546,20 @@ function tabRevision(root){
   const filas=filasRev(hs);
   const nOk=filas.filter(hecha).length, pctF=filas.length?Math.round(nOk*100/filas.length):0;
   const resueltos=hs.filter(h=>!HALL_ABIERTO(h)).length;
-  const visible=(h)=>A.rfil==="todo"||HALL_ABIERTO(h);
+  const visible=(h)=>A.rfil==="todo"||HALL_ABIERTO(h)||(A.rmodo&&!!h.revision_estado);
+  const aRevisar=hs.filter(h=>h.revision_estado||HALL_ABIERTO(h)), revisados=aRevisar.filter(h=>h.revision_estado).length;
   const vis=(h)=>visible(h)&&enVista(h,A.rvis);
   const hayVisibles=hs.some(vis);
   root.innerHTML=`
     <div class="rv-top chart-card wide">
       <div class="rv-top-l">
         <div class="rv-prog"><div class="rv-bar"><i style="width:${pctF}%"></i></div>
-          <span><b>${nOk}</b> de ${filas.length} filas · <b>${resueltos}</b> de ${hs.length} puntos resueltos</span></div>
+          <span><b>${nOk}</b> de ${filas.length} filas · <b>${resueltos}</b> de ${hs.length} puntos resueltos${A.rmodo?` · <b>${revisados}</b> de ${aRevisar.length} revisados`:""}</span></div>
       </div>
       <div class="rv-top-r">
         <label class="ax-inl">Trabajando como <input type="text" id="rv-quien" list="rv-equipo" placeholder="Tu nombre" value="${esc(quien())}"></label>
         <datalist id="rv-equipo">${["Matías Romero","Sebastián Pita","Manuel Criscuoli","Edward","Nicolás","Martín"].map(n=>`<option value="${n}">`).join("")}</datalist>
+        <button class="tab ${A.rmodo?"active":""}" id="rv-modo" title="Muestra en cada punto: OK, Sacar, Cambiar y Ya lo sé">Modo revisión</button>
         <div class="ax-seg">${[["pend","Pendientes"],["todo","Todo"]].map(s=>`<button class="tab ${A.rfil===s[0]?"active":""}" data-rf="${s[0]}">${s[1]}</button>`).join("")}</div>
       </div>
     </div>
@@ -565,7 +567,7 @@ function tabRevision(root){
       <div class="ax-seg">${VISTAS.map(v=>{ const n=hs.filter(h=>visible(h)&&enVista(h,v[0])).length; return `<button class="tab ${A.rvis===v[0]?"active":""}" data-rvis="${v[0]}">${v[1]} <span class="rv-n">${n}</span></button>`; }).join("")}</div>
       ${hayVisibles?`<div class="rv-plegar"><button class="btn ghost sm" data-rtodos="1">Abrir todos</button><button class="btn ghost sm" data-rtodos="0">Plegar todos</button></div>`:""}
     </div>
-    <div class="rr-note">Abrí un punto y tildá cada fila cuando la corrijas en QuickBooks. Usá <b>📷</b> para la foto y <b>⋯</b> si la hiciste distinto o no corresponde.</div>
+    <div class="rr-note">${A.rmodo?"Decidí cada punto: <b>OK</b> queda como está, <b>Sacar</b> lo descarta, <b>Cambiar</b> deja qué corregir y <b>Ya lo sé</b> lo descarta y propone el criterio para la memoria. Tocá de nuevo la opción elegida para deshacerla.":"Abrí un punto y tildá cada fila cuando la corrijas en QuickBooks. Usá <b>📷</b> para la foto y <b>⋯</b> si la hiciste distinto o no corresponde."}</div>
     ${PASO_ORDEN.map(k=>{ const g=hs.filter(h=>(h.paso||"otros")===k&&vis(h)); if(!g.length) return "";
       return `<div class="rv-paso"><div class="rv-paso-tit">${k==="otros"?"Otros controles":`Paso ${esc(k)} · ${esc(PASOS_DENNIS[k]||"")}`}</div>${g.map(puntoCard).join("")}</div>`; }).join("")
       || `<div class="empty">${hs.some(visible)?"✔ No queda nada pendiente en esta vista.":"✔ No queda nada pendiente en esta auditoría."}</div>`}`;
@@ -585,8 +587,9 @@ function puntoCard(h){
     <div class="rv-head" role="button" tabindex="0" aria-expanded="${abierto}" data-rab="${h.id}"><span class="rv-caret" aria-hidden="true">▸</span><span class="rv-ref">${esc(h.ref)}</span>
       <div class="rv-h-tit"><b>${esc(h.titulo)}</b>
         ${marcaVisible?` <span class="rv-marca ${marca[1]}">${marca[0]}</span>`:""}${h.destino!=="CLIENTE"&&pideCliente(h)&&A.rvis!=="cliente"?` <span class="rv-marca cli">También al cliente</span>`:""}</div>
-      ${h.monto!=null?`<span class="rv-monto">${money2(h.monto)}</span>`:""}${est}</div>
-    <div class="rv-cuerpo"><div class="rv-txt"><div><b>Qué pasa:</b> ${esc(h.detalle||"—")}</div><div><b>Qué hacer:</b> ${esc(h.recomendacion||"—")}</div>
+      ${h.monto!=null?`<span class="rv-monto">${money2(h.monto)}</span>`:""}${est}
+      ${A.rmodo?`<span class="rv-dec">${REV_BOTONES.map(b=>`<button type="button" class="rv-dbtn ${b[1]} ${h.revision_estado===b[0]?"on":""}" data-rev="${h.id}" data-rtipo="${b[0]}" aria-pressed="${h.revision_estado===b[0]}">${b[0]}</button>`).join("")}</span>`:h.revision_estado?`<span class="rv-marca rev">${esc(h.revision_estado)}</span>`:""}</div>
+    <div class="rv-cuerpo">${h.revision_estado?`<div class="rv-revnota"><b>Revisión: ${esc(h.revision_estado)}${h.revision_por?` · ${esc(h.revision_por)}`:""}</b>${h.revision_nota?` — ${esc(h.revision_nota)}`:""}</div>`:""}<div class="rv-txt"><div><b>Qué pasa:</b> ${esc(h.detalle||"—")}</div><div><b>Qué hacer:</b> ${esc(h.recomendacion||"—")}</div>
       ${h.respuesta_dennis?`<div class="rv-dennis"><b>Dennis:</b> ${esc(h.respuesta_dennis)}</div>`:""}</div>
     ${fs.length?`<div class="ax-scroll"><table class="ip-table rv-tabla"><thead><tr><th>✓</th><th>Fecha</th><th>Num</th><th class="l">Payee</th><th class="r">Monto</th><th class="l">Está en</th><th class="l">Pasar a / qué hacer</th><th class="l">Estado</th><th></th></tr></thead><tbody>
       ${fs.map(f=>`<tr class="${hecha(f)?"rv-ok":""} ${f.estado==="Ya no aparece"?"rv-ya":""}">
@@ -700,6 +703,38 @@ function respuestaDennis(hid){
     try{ await aapi("aud_hallazgo_save",{ id:hid, patch:{ respuesta_dennis:t } }); closeModal(); await recargarCliente(); toast("Guardado ✓"); }
     catch(ex){ toast(ex.message,true); } });
 }
+/* ---- Revisión con criterio: la decisión del revisor sobre cada punto ---- */
+const REV_BOTONES = [["OK","ok"],["Sacar","sacar"],["Cambiar","cambiar"],["Ya lo sé","yalose"]];
+const REV_PIDE = { "Sacar":["Motivo","Por qué sale este punto"], "Cambiar":["Qué hay que cambiar","Qué corregir en este punto"], "Ya lo sé":["Criterio","Queda como propuesta en la Memoria del cliente. Ejemplo: los pagos de piscina van a Repairs."] };
+const REV_SALE = (e)=>e==="Sacar"||e==="Ya lo sé";
+async function guardarRevision(h,tipo,nota){
+  const antes=h.revision_estado, patch={ revision_estado:tipo, revision_nota:nota||null, revision_por:tipo?quien():null, revision_at:tipo?new Date().toISOString():null, revision_memoria_id:null };
+  const mem=(A.exp.memoria||[]).find(m=>m.id===h.revision_memoria_id);
+  if(mem&&mem.estado==="Propuesta") await aapi("aud_memoria_del",{ id:mem.id });
+  else if(mem) patch.revision_memoria_id=tipo==="Ya lo sé"?mem.id:null;
+  if(tipo==="Ya lo sé"&&!patch.revision_memoria_id){
+    const d=await aapi("aud_memoria_save",{ cliente_id:A.cid, patch:{ tema:"Criterio", contenido:nota, estado:"Propuesta", origen:quien(), control:h.codigo||null } });
+    patch.revision_memoria_id=d.memoria.id;
+  }
+  if(REV_SALE(tipo)&&HALL_ABIERTO(h)) patch.estado="Descartado";
+  else if(!REV_SALE(tipo)&&REV_SALE(antes)&&h.estado==="Descartado") patch.estado="Abierto";
+  await aapi("aud_hallazgo_save",{ id:h.id, patch, quien:quien() });
+  await recargarCliente();
+}
+function revisarPunto(hid,tipo){
+  if(!pedirQuien()) return;
+  const h=A.exp.hallazgos.find(x=>x.id===hid);
+  const fallo=(ex)=>toast(ex.message,true);
+  if(h.revision_estado===tipo) return guardarRevision(h,null,null).then(()=>toast("Decisión deshecha")).catch(fallo);
+  if(tipo==="OK") return guardarRevision(h,"OK",null).catch(fallo);
+  const [etq,ayuda]=REV_PIDE[tipo];
+  openModal(`${h.ref} · ${tipo}`,`<p><b>${esc(h.titulo)}</b></p><label>${etq}</label><textarea id="rp-txt" rows="3" placeholder="${esc(ayuda)}"></textarea>
+    <div class="modal-actions"><button class="btn ghost" id="rp-cancel">Cancelar</button><button class="btn primary" id="rp-ok">Guardar</button></div>`);
+  $("#rp-cancel").addEventListener("click",closeModal);
+  $("#rp-ok").addEventListener("click",async ()=>{ const v=$("#rp-txt").value.trim(); if(!v) return toast(`Escribí: ${etq.toLowerCase()}`,true);
+    try{ await guardarRevision(h,tipo,v); closeModal(); toast(tipo==="Ya lo sé"?"Punto descartado y criterio propuesto en Memoria ✓":"Decisión guardada ✓"); }catch(ex){ fallo(ex); } });
+  setTimeout(()=>$("#rp-txt")?.focus(),50);
+}
 function pedirAlCliente(hid){
   const h=A.exp.hallazgos.find(x=>x.id===hid), ya=pideCliente(h);
   openModal(`${h.ref} · pedir al cliente`,`<p><b>${esc(h.titulo)}</b></p>
@@ -727,9 +762,11 @@ function bindRevision(root, run){
   $("#rv-quien",root).addEventListener("change",e=>{ try{ localStorage.setItem("qb_aud_quien",e.target.value.trim()); }catch(_){} renderExp(); });
   $$("[data-rf]",root).forEach(b=>b.addEventListener("click",()=>{ A.rfil=b.dataset.rf; renderExp(); }));
   $$("[data-rvis]",root).forEach(b=>b.addEventListener("click",()=>{ A.rvis=b.dataset.rvis; renderExp(); }));
+  $("#rv-modo",root)?.addEventListener("click",()=>{ A.rmodo=!A.rmodo; renderExp(); });
+  $$("[data-rev]",root).forEach(b=>b.addEventListener("click",e=>{ e.stopPropagation(); revisarPunto(+b.dataset.rev,b.dataset.rtipo); }));
   const plegar=(h,abrir)=>{ const id=+h.dataset.rab; abrir?A.rab.add(id):A.rab.delete(id); h.parentElement.classList.toggle("abierto",abrir); h.setAttribute("aria-expanded",abrir); };
   $$("[data-rab]",root).forEach(h=>{ h.addEventListener("click",()=>plegar(h,!A.rab.has(+h.dataset.rab)));
-    h.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); plegar(h,!A.rab.has(+h.dataset.rab)); } }); });
+    h.addEventListener("keydown",e=>{ if(e.target===h&&(e.key==="Enter"||e.key===" ")){ e.preventDefault(); plegar(h,!A.rab.has(+h.dataset.rab)); } }); });
   $$("[data-rtodos]",root).forEach(b=>b.addEventListener("click",()=>$$("[data-rab]",root).forEach(h=>plegar(h,b.dataset.rtodos==="1"))));
   $$(".rv-chk",root).forEach(c=>c.addEventListener("change",()=>{
     if(!pedirQuien()){ c.checked=!c.checked; return; }

@@ -119,7 +119,7 @@ const AUD_TIPOS = [
   'Reporte resumido', 'Reporte detallado', 'Reporte financiero', 'Mail al cliente', 'Informe', 'Papel de trabajo', 'Otro',
 ];
 const RUN_FIELDS = new Set(['tipo','periodo_desde','periodo_hasta','fecha','estado','semaforo','resumen','conclusiones','metricas','skill_version','auditor','reporte_dennis','mail_cliente']);
-const HALL_FIELDS = new Set(['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado','destino','en_resumen','paso','ref','orden','respuesta_dennis','mail_texto']);
+const HALL_FIELDS = new Set(['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado','destino','en_resumen','paso','ref','orden','respuesta_dennis','mail_texto','revision_estado','revision_nota','revision_por','revision_at','revision_memoria_id']);
 const HALL_INS = ['codigo','area','cuenta','monto','severidad','titulo','detalle','recomendacion','estado','destino','en_resumen','paso','ref','orden','mail_texto'];
 const HALL_ABIERTOS = ['Abierto', 'Repetido'];
 const MEM_FIELDS = new Set(['tema','contenido','estado','origen','control']);
@@ -599,12 +599,17 @@ Deno.serve(async (req) => {
         }
         if (HALL_ABIERTOS.includes(String(patch.estado))) { patch.resuelto_fecha = null; patch.resuelto_run_id = null; }
         else if (patch.estado) patch.resuelto_fecha = body.patch.resuelto_fecha || new Date().toISOString().slice(0, 10);
-        const { data: antes } = await db.from('qb_aud_hallazgos').select('estado').eq('id', body.id).maybeSingle();
+        const { data: antes } = await db.from('qb_aud_hallazgos').select('estado, revision_estado').eq('id', body.id).maybeSingle();
         const { data, error } = await db.from('qb_aud_hallazgos').update(patch).eq('id', body.id).select().single();
         if (error) throw error;
         if (patch.estado && antes?.estado !== patch.estado) {
           await registrar({ cliente_id: data.cliente_id, run_id: data.run_id, hallazgo_id: data.id, ref: data.ref, fila: data.titulo,
             monto: data.monto, accion: `Punto ${String(patch.estado).toLowerCase()}`, quien: quienDe(body.quien) });
+        }
+        if ('revision_estado' in patch && antes?.revision_estado !== patch.revision_estado) {
+          await registrar({ cliente_id: data.cliente_id, run_id: data.run_id, hallazgo_id: data.id, ref: data.ref, fila: data.titulo,
+            monto: data.monto, accion: patch.revision_estado ? `Revisión: ${patch.revision_estado}` : 'Revisión deshecha',
+            nota: patch.revision_nota ?? null, quien: quienDe(body.quien) });
         }
         return json({ ok: true, hallazgo: data });
       }
