@@ -591,6 +591,34 @@ function tabRevision(root){
   bindFotos(root);
 }
 
+/* Tilde del punto entero: pasa todas sus filas pendientes a Corregido. */
+function chkPunto(h,fs){
+  const pend=fs.filter(f=>f.estado==="Pendiente").length, corr=fs.filter(f=>f.estado==="Corregido").length;
+  if(!fs.length||h.estado==="Descartado"||(!pend&&!corr)) return "";
+  const titulo=pend?`Marcar todo hecho: filas pendientes ${pend}`:`Volver a pendiente: filas corregidas ${corr}`;
+  return `<input type="checkbox" class="rv-chk rv-chk-punto" data-hchk="${h.id}" ${pend?"":"checked"} ${pend&&(corr||pend<fs.length)?'data-parcial="1"':""} title="${titulo}" aria-label="Punto ${esc(h.ref)}: ${titulo}">`;
+}
+function tildarPunto(hid,marcar){
+  const h=A.exp.hallazgos.find(x=>x.id===hid), fs=filasDe(hid);
+  const n=fs.filter(f=>f.estado===(marcar?"Pendiente":"Corregido")).length, otras=fs.filter(f=>!["Pendiente","Corregido"].includes(f.estado)).length;
+  const filas=(k)=>`${k} fila${k===1?"":"s"}`;
+  openModal(`Punto ${h.ref}`,`
+    <p>${marcar?`Se marcan como <b>Corregido</b> ${n===1?"la":"las"} ${filas(n)} ${n===1?"pendiente":"pendientes"}, a nombre de <b>${esc(quien())}</b>.`
+      :`Vuelve${n===1?"":"n"} a <b>Pendiente</b> ${n===1?"la":"las"} ${filas(n)} ${n===1?"corregida":"corregidas"}, también las que se tildaron de a una.`}</p>
+    <p class="muted">${esc(h.titulo)}${otras?` · ${filas(otras)} con otro estado no ${otras===1?"cambia":"cambian"}.`:""}</p>
+    <div class="modal-actions"><button class="btn ghost" id="rvp-no">Cancelar</button><button class="btn primary" id="rvp-si">${marcar?"✔ Marcar todo hecho":"Volver a pendiente"}</button></div>`);
+  $("#rvp-no").addEventListener("click",()=>{ closeModal(); renderExp(); });
+  $("#rvp-si").addEventListener("click",async e=>{ e.target.disabled=true; const y=$("#ax-body")?.scrollTop||0;
+    try{
+      const d=await aapi("aud_correccion_punto",{ hallazgo_id:hid, marcar, quien:quien() });
+      d.filas.forEach(f=>{ const i=A.exp.correcciones.findIndex(x=>x.id===f.id); if(i>=0) A.exp.correcciones[i]=f; });
+      if(d.hallazgo){ const j=A.exp.hallazgos.findIndex(x=>x.id===d.hallazgo.id); if(j>=0) A.exp.hallazgos[j]={...A.exp.hallazgos[j],...d.hallazgo}; }
+      if(d.log?.length) A.exp.log=[...d.log,...(A.exp.log||[])];
+      closeModal(); toast(marcar?`Punto ${h.ref}: ${filas(d.filas.length)} ${d.filas.length===1?"marcada":"marcadas"} ✔`:`Punto ${h.ref}: ${filas(d.filas.length)} otra vez ${d.filas.length===1?"pendiente":"pendientes"}`);
+    }catch(ex){ closeModal(); toast(ex.message,true); }
+    renderExp(); const b=$("#ax-body"); if(b) b.scrollTop=y; });
+}
+
 function puntoCard(h){
   const fs=filasDe(h.id), ok=fs.filter(hecha).length;
   const marca=MARCA[h.destino];
@@ -600,7 +628,7 @@ function puntoCard(h){
   const abierto=A.rab.has(h.id);
   const marcaVisible=marca&&!(A.rvis==="cliente"&&h.destino==="CLIENTE")&&!(A.rvis==="dennis"&&h.destino==="DEFINIR");
   return `<div class="rv-punto ${HALL_ABIERTO(h)?"":"cerrado"} ${abierto?"abierto":""}" id="rv-h${h.id}">
-    <div class="rv-head" role="button" tabindex="0" aria-expanded="${abierto}" data-rab="${h.id}"><span class="rv-caret" aria-hidden="true">▸</span><span class="rv-ref">${esc(h.ref)}</span>
+    <div class="rv-head" role="button" tabindex="0" aria-expanded="${abierto}" data-rab="${h.id}"><span class="rv-caret" aria-hidden="true">▸</span>${chkPunto(h,fs)}<span class="rv-ref">${esc(h.ref)}</span>
       <div class="rv-h-tit"><b>${esc(h.titulo)}</b>
         ${marcaVisible?` <span class="rv-marca ${marca[1]}">${marca[0]}</span>`:""}${h.destino!=="CLIENTE"&&pideCliente(h)&&A.rvis!=="cliente"?` <span class="rv-marca cli">También al cliente</span>`:""}</div>
       ${h.monto!=null?`<span class="rv-monto">${money2(h.monto)}</span>`:""}${est}
@@ -784,7 +812,12 @@ function bindRevision(root, run){
   $$("[data-rab]",root).forEach(h=>{ h.addEventListener("click",()=>plegar(h,!A.rab.has(+h.dataset.rab)));
     h.addEventListener("keydown",e=>{ if(e.target===h&&(e.key==="Enter"||e.key===" ")){ e.preventDefault(); plegar(h,!A.rab.has(+h.dataset.rab)); } }); });
   $$("[data-rtodos]",root).forEach(b=>b.addEventListener("click",()=>$$("[data-rab]",root).forEach(h=>plegar(h,b.dataset.rtodos==="1"))));
-  $$(".rv-chk",root).forEach(c=>c.addEventListener("change",()=>{
+  $$("[data-hchk]",root).forEach(c=>{ c.indeterminate=!!c.dataset.parcial;
+    c.addEventListener("click",e=>e.stopPropagation());
+    c.addEventListener("keydown",e=>e.stopPropagation());
+    c.addEventListener("change",()=>{ if(!pedirQuien()){ renderExp(); return; }
+      tildarPunto(+c.dataset.hchk,!!c.dataset.parcial||c.checked); }); });
+  $$(".rv-chk:not([data-hchk])",root).forEach(c=>c.addEventListener("change",()=>{
     if(!pedirQuien()){ c.checked=!c.checked; return; }
     guardarFila(+c.dataset.fid,{ estado:c.checked?"Corregido":"Pendiente" }); }));
   $$("[data-fmas]",root).forEach(b=>b.addEventListener("click",()=>editarFila(+b.dataset.fmas)));

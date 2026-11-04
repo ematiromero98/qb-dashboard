@@ -641,6 +641,31 @@ Deno.serve(async (req) => {
         return json({ ok: true, fila: data, hallazgo, log });
       }
 
+      // Tildar o destildar un punto entero. Solo mueve Pendiente ⇄ Corregido: lo
+      // marcado «Hecho distinto», «No corresponde» o «Ya no aparece» no se toca.
+      case 'aud_correccion_punto': {
+        const { data: h } = await db.from('qb_aud_hallazgos').select('id, ref, estado').eq('id', body.hallazgo_id).maybeSingle();
+        if (!h) return json({ error: 'hallazgo no encontrado' }, 404);
+        if (h.estado === 'Descartado') return json({ error: 'El punto está descartado' }, 400);
+        const quien = quienDe(body.quien);
+        if (!quien) return json({ error: 'Falta quién lo marca' }, 400);
+        const marcar = body.marcar === true, ahora = new Date().toISOString();
+        const { data: filas, error } = await db.from('qb_aud_correcciones')
+          .update(marcar ? { estado: 'Corregido', hecho_por: quien, hecho_at: ahora, actualizado_at: ahora }
+            : { estado: 'Pendiente', hecho_por: null, hecho_at: null, actualizado_at: ahora })
+          .eq('hallazgo_id', h.id).eq('estado', marcar ? 'Pendiente' : 'Corregido').select();
+        if (error) throw error;
+        const hallazgo = await recalcHallazgo(h.id);
+        // Una línea de historial por fila, igual que al tildar de a una. Si falla no frena la corrección.
+        let log: any[] = [];
+        if (filas?.length) {
+          const r = await db.from('qb_aud_log').insert(filas.map((f: any) => ({ cliente_id: f.cliente_id, run_id: f.run_id, hallazgo_id: f.hallazgo_id,
+            correccion_id: f.id, ref: h.ref ?? null, fila: filaTxt(f), monto: f.monto, accion: marcar ? 'Corregido' : 'Volvió a pendiente', nota: 'Punto completo', quien }))).select();
+          if (r.error) console.error('qb-api aud_correccion_punto log:', r.error); else log = r.data ?? [];
+        }
+        return json({ ok: true, filas: filas ?? [], hallazgo, log });
+      }
+
       case 'aud_correccion_add': {
         const { data: h } = await db.from('qb_aud_hallazgos').select('id, run_id, cliente_id').eq('id', body.hallazgo_id).maybeSingle();
         if (!h) return json({ error: 'hallazgo no encontrado' }, 404);
