@@ -278,8 +278,10 @@ function renderCliente(body){
   const pend=filasRev(hs).filter(f=>f.estado==="Pendiente").length;
   const propuestas=E.memoria.filter(m=>m.estado==="Propuesta").length;
   const falta=run?faltanMail(run).length:0;
+  const consultas=run?puntosDennis(run).length:0;
   const tabs=[["revision",`Revisión ${pend?`<span class="cnt" title="Filas pendientes de corregir">${pend}</span>`:""}`],
     ["mail",`✉️ Mail al cliente ${falta?`<span class="cnt ax-cnt-warn" title="Puntos a los que les falta foto o texto">${falta}</span>`:""}`],
+    ["dennis",`✉️ Mail a Dennis ${consultas?`<span class="cnt" title="Puntos para consultar con Dennis">${consultas}</span>`:""}`],
     ["auditorias","Auditoría y documentación"],
     ["historial","Historial"],
     ["memoria",`Memoria ${propuestas?`<span class="cnt ax-cnt-prop" title="Propuestas para revisar">${propuestas}</span>`:""}`]];
@@ -303,6 +305,7 @@ function renderCliente(body){
   const t=$("#ax-tab",body);
   if(A.tab==="revision") tabRevision(t);
   else if(A.tab==="mail") tabMail(t);
+  else if(A.tab==="dennis") tabDennis(t);
   else if(A.tab==="auditorias") tabAuditorias(t);
   else if(A.tab==="historial") tabHistorial(t);
   else if(A.tab==="memoria") tabMemoria(t);
@@ -361,7 +364,9 @@ function fotoFila(id){
 
 /* ---- Mail al cliente: se ve como va a salir, con la foto de QuickBooks y la del extracto ---- */
 const MES_EN=["January","February","March","April","May","June","July","August","September","October","November","December"];
-const puntosMail = (run)=>puntosDe(run.id).filter(h=>h.destino==="CLIENTE"&&HALL_ABIERTO(h));
+/* Va al mail el punto con destino CLIENTE y cualquier otro que tenga pedido escrito (botón «Pedir al cliente» de la Revisión). */
+const pideCliente = (h)=>h.destino==="CLIENTE"||!!String(h.mail_texto||"").trim();
+const puntosMail = (run)=>puntosDe(run.id).filter(h=>pideCliente(h)&&HALL_ABIERTO(h));
 const fotoMail = (h,t)=>fotosDe(x=>x.hallazgo_id===h.id&&x.tipo===t);
 function faltanMail(run){ return puntosMail(run).filter(h=>!String(h.mail_texto||"").trim()||!fotoMail(h,"QuickBooks").length||!fotoMail(h,"Extracto").length); }
 function periodoEn(r){ const d=String(r.periodo_desde||""), h=String(r.periodo_hasta||""); if(!h) return "";
@@ -447,15 +452,51 @@ function mailTxt(m){
 function b64Utf8(s){ return btoa(unescape(encodeURIComponent(s))); }
 const lineas76 = (s)=>s.replace(/(.{76})/g,"$1\r\n");
 /* .eml sin enviar (X-Unsent): Outlook lo abre como mail nuevo, con las fotos adentro. */
-function bajarEml(m){
+function bajarEml(m,armar=mailHtml){
   const lim="=_qb_"+Date.now(), fotos=m.items.flatMap(it=>[...it.qb,...it.ext]);
   fotos.forEach((f,i)=>{ f.cid=`foto${i+1}@chermisqui`; });
-  const html=mailHtml(m,f=>"cid:"+f.cid);
+  const html=armar(m,f=>"cid:"+f.cid);
   const partes=[`--${lim}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${lineas76(b64Utf8(html))}`,
     ...fotos.map((f,i)=>`--${lim}\r\nContent-Type: ${f.tipoMime}; name="foto${i+1}"\r\nContent-Transfer-Encoding: base64\r\nContent-ID: <${f.cid}>\r\nContent-Disposition: inline; filename="foto${i+1}"\r\n\r\n${lineas76(f.b64)}`)];
   const eml=`X-Unsent: 1\r\nSubject: =?UTF-8?B?${b64Utf8(m.asunto)}?=\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; boundary="${lim}"\r\n\r\n${partes.join("\r\n")}\r\n--${lim}--\r\n`;
   const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([eml],{type:"message/rfc822"}));
-  a.download=`Mail - ${cliDe(A.cid).nombre.replace(/[\\/:*?"<>|]/g,"")}.eml`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  a.download=`Mail - ${cliDe(A.cid).nombre.replace(/[\\/:*?"<>|]/g,"")}${m.archivo||""}.eml`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+}
+
+/* ---- Mail a Dennis: los puntos «Consultar con Dennis». Es un aviso: no bloquea nada. ---- */
+const puntosDennis = (run)=>puntosDe(run.id).filter(h=>h.destino==="DEFINIR"&&HALL_ABIERTO(h));
+function dennisDatos(run){
+  const cli=cliDe(A.cid).nombre, per=periodoRev(run);
+  return { archivo:" - Dennis", asunto:`${cli} – Consultas ${per}`,
+    intro:`Te consulto estos puntos de la revisión de ${cli} (${per}).`,
+    items:puntosDennis(run).map((h,i)=>({ n:i+1, h, filas:filasMail(h), qb:[], ext:[] })), firma:["Gracias,",quien()||"Matías Romero"] };
+}
+const descFila = (f)=>[f.num,f.payee].filter(Boolean).join(" · ");
+function dennisHtml(m){
+  const td='style="border:1px solid #bbb;padding:5px 8px"', th='style="border:1px solid #bbb;padding:5px 8px;background:#eee;text-align:left"';
+  return `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#000"><p>Hola Dennis,</p><p>${esc(m.intro)}</p>`+
+    m.items.map(it=>`<p style="margin:18px 0 4px"><b>${it.n}. ${esc(it.h.titulo)}</b></p><p style="margin:0 0 4px">${esc(it.h.detalle||"")}</p><p style="margin:0 0 8px"><b>Consulta:</b> ${esc(it.h.recomendacion||"")}</p>
+      ${it.filas.length?`<table style="border-collapse:collapse;font-size:10pt"><tr><th ${th}>Fecha</th><th ${th}>Detalle</th><th ${th}>Monto</th><th ${th}>Está en</th></tr>${it.filas.map(f=>`<tr><td ${td}>${esc(f.fecha||"")}</td><td ${td}>${esc(descFila(f))}</td><td ${td} align="right">${money2(f.monto)}</td><td ${td}>${esc(f.de||"")}</td></tr>`).join("")}</table>`:""}`).join("")+
+    `<p style="margin-top:18px">${m.firma.map(esc).join("<br>")}</p></div>`;
+}
+function dennisTxt(m){
+  return ["Hola Dennis,","",m.intro,"",...m.items.flatMap(it=>[`${it.n}. ${it.h.titulo}`,it.h.detalle||"",`Consulta: ${it.h.recomendacion||""}`,...it.filas.map(f=>`   ${[f.fecha,descFila(f),money2(f.monto),f.de].filter(Boolean).join(" | ")}`),""]),...m.firma].join("\r\n");
+}
+function tabDennis(root){
+  const run=runSel(); if(!run){ root.innerHTML=`<div class="empty">Todavía no hay auditorías de este cliente.</div>`; return; }
+  const M=dennisDatos(run);
+  if(!M.items.length){ root.innerHTML=`<div class="empty">En esta auditoría no hay nada para consultar con Dennis.</div>`; return; }
+  root.innerHTML=`<div class="ml-bar chart-card wide"><div><b>${M.items.length} punto${M.items.length===1?"":"s"} para consultar.</b> <span class="muted">Es un aviso: nada queda bloqueado. Lo que conteste se anota en cada punto de la Revisión.</span></div>
+      <div class="ml-acts"><button class="btn ghost" id="md-copy">📋 Copiar mail</button><button class="btn primary" id="md-eml">⬇ Abrir en Outlook</button></div></div>
+    <div class="ml-mail"><div class="ml-asunto"><span>Asunto</span> ${esc(M.asunto)}</div><p>Hola Dennis,</p><p>${esc(M.intro)}</p>
+      ${M.items.map(it=>`<div class="ml-item"><div class="ml-ref" title="Solo lo ves vos, no sale en el mail">Punto ${esc(it.h.ref)}</div>
+        <p><b>${it.n}. ${esc(it.h.titulo)}</b></p><p>${esc(it.h.detalle||"")}</p><p><b>Consulta:</b> ${esc(it.h.recomendacion||"")}</p>
+        ${it.filas.length?`<table class="ml-tabla"><thead><tr><th>Fecha</th><th>Detalle</th><th class="r">Monto</th><th>Está en</th></tr></thead><tbody>${it.filas.map(f=>`<tr><td>${esc(f.fecha||"")}</td><td>${esc(descFila(f))}</td><td class="r">${money2(f.monto)}</td><td>${esc(f.de||"")}</td></tr>`).join("")}</tbody></table>`:""}</div>`).join("")}
+      <p class="ml-firma">${M.firma.map(esc).join("<br>")}</p></div>`;
+  $("#md-copy",root).addEventListener("click",async ()=>{
+    try{ await navigator.clipboard.write([new ClipboardItem({ "text/html":new Blob([dennisHtml(M)],{type:"text/html"}), "text/plain":new Blob([dennisTxt(M)],{type:"text/plain"}) })]); toast("Mail copiado ✓ Pegalo en el correo con Ctrl+V"); }
+    catch(ex){ toast("No se pudo copiar: "+ex.message,true); } });
+  $("#md-eml",root).addEventListener("click",()=>{ bajarEml(M,dennisHtml); toast("Abrí el archivo: se abre en Outlook listo para enviar"); });
 }
 
 /* ---- Historial: qué se corrigió, quién y cuándo ---- */
@@ -531,7 +572,7 @@ function puntoCard(h){
   return `<div class="rv-punto ${HALL_ABIERTO(h)?"":"cerrado"}" id="rv-h${h.id}">
     <div class="rv-head"><span class="rv-ref">${esc(h.ref)}</span>
       <div class="rv-h-tit"><b>${esc(h.titulo)}</b>${h.monto!=null&&!String(h.titulo).includes("$")?` <span class="muted">— ${money2(h.monto)}</span>`:""}
-        ${marca?` <span class="rv-marca ${marca[1]}">${marca[0]}</span>`:""}</div>${est}</div>
+        ${marca?` <span class="rv-marca ${marca[1]}">${marca[0]}</span>`:""}${h.destino!=="CLIENTE"&&pideCliente(h)?` <span class="rv-marca cli">También al cliente · va en el mail</span>`:""}</div>${est}</div>
     <div class="rv-txt"><div><b>Qué pasa:</b> ${esc(h.detalle||"—")}</div><div><b>Qué hacer:</b> ${esc(h.recomendacion||"—")}</div>
       ${h.respuesta_dennis?`<div class="rv-dennis"><b>Dennis:</b> ${esc(h.respuesta_dennis)}</div>`:""}</div>
     ${fs.length?`<div class="ax-scroll"><table class="ip-table rv-tabla"><thead><tr><th>✓</th><th>Fecha</th><th>Num</th><th class="l">Payee</th><th class="r">Monto</th><th class="l">Está en</th><th class="l">Pasar a / qué hacer</th><th class="l">Estado</th><th></th></tr></thead><tbody>
@@ -553,6 +594,7 @@ function puntoCard(h){
       <button class="btn ghost sm" data-fadd="${h.id}">+ Agregar fila</button>
       ${["DEFINIR","DEFINIDO"].includes(h.destino)?`<button class="btn ghost sm" data-dennis="${h.id}">📝 ${h.respuesta_dennis?"Editar":"Anotar"} lo que dijo Dennis</button>`:""}
       ${!fs.length?(HALL_ABIERTO(h)?`<button class="btn primary sm" data-hok="${h.id}">✔ Marcar resuelto</button>`:`<button class="btn ghost sm" data-hreab="${h.id}">Reabrir</button>`):""}
+      ${HALL_ABIERTO(h)&&h.destino!=="CLIENTE"?`<button class="btn ghost sm" data-hcli="${h.id}" title="${pideCliente(h)?"Editar o quitar el pedido al cliente":"Agrega este punto al mail al cliente, sin cambiar lo que hay que corregir"}">✉️ ${pideCliente(h)?"Pedido al cliente":"Pedir al cliente"}</button>`:""}
       <button class="btn ghost sm" data-hedit="${h.id}" title="Cambiar el destino o descartar el punto">⋯ Punto</button>
     </div></div>`;
 }
@@ -570,7 +612,7 @@ function textoRespuesta(run, hs){
   L.push("","Capturas",...Object.keys(CAPTURA).map(k=>`[${k}. ${PASOS_DENNIS[k]}: pegar la captura acá]`));
   const def=hs.filter(h=>h.destino==="DEFINIR"&&HALL_ABIERTO(h)); if(def.length) L.push("","Para consultar con vos",...def.map(h=>`• ${h.ref} ${h.titulo}: ${h.recomendacion||""}`));
   const yaDef=hs.filter(h=>h.respuesta_dennis); if(yaDef.length) L.push("","Lo que me dijiste (aplicado)",...yaDef.map(h=>`• ${h.ref} ${h.titulo}: ${h.respuesta_dennis}`));
-  const cl=hs.filter(h=>h.destino==="CLIENTE"&&HALL_ABIERTO(h)); if(cl.length) L.push("","Pendiente del cliente",...cl.map(h=>`• ${h.ref} ${h.titulo}`));
+  const cl=hs.filter(h=>pideCliente(h)&&HALL_ABIERTO(h)); if(cl.length) L.push("","Pendiente del cliente",...cl.map(h=>`• ${h.ref} ${h.titulo}`));
   L.push("","Saludos,",quien()||"");
   return L.join("\n");
 }
@@ -645,6 +687,18 @@ function respuestaDennis(hid){
     try{ await aapi("aud_hallazgo_save",{ id:hid, patch:{ respuesta_dennis:t } }); closeModal(); await recargarCliente(); toast("Guardado ✓"); }
     catch(ex){ toast(ex.message,true); } });
 }
+function pedirAlCliente(hid){
+  const h=A.exp.hallazgos.find(x=>x.id===hid), ya=pideCliente(h);
+  openModal(`${h.ref} · pedir al cliente`,`<p><b>${esc(h.titulo)}</b></p>
+    <p class="muted">Se suma al mail al cliente con sus filas. El punto sigue como está en la Revisión.</p>
+    <label>Qué se le pide (en inglés)</label><textarea id="pc-txt" rows="3" placeholder="Please let us know what these payments are for.">${esc(h.mail_texto||"")}</textarea>
+    <div class="modal-actions">${ya?'<button class="btn ghost" id="pc-del">Quitar del mail</button>':""}<button class="btn ghost" id="pc-cancel">Cancelar</button><button class="btn primary" id="pc-ok">Guardar</button></div>`);
+  const guardar=async (v)=>{ try{ await aapi("aud_hallazgo_save",{ id:hid, patch:{ mail_texto:v } }); closeModal(); await recargarCliente(); toast(v?"Agregado al mail al cliente ✓":"Quitado del mail al cliente"); }catch(ex){ toast(ex.message,true); } };
+  $("#pc-cancel").addEventListener("click",closeModal);
+  $("#pc-del")?.addEventListener("click",()=>guardar(null));
+  $("#pc-ok").addEventListener("click",()=>{ const v=$("#pc-txt").value.trim(); if(!v) return toast("Escribí qué se le pide al cliente",true); guardar(v); });
+  setTimeout(()=>$("#pc-txt")?.focus(),50);
+}
 function editarPunto(hid){
   const h=A.exp.hallazgos.find(x=>x.id===hid);
   openModal(`${h.ref} · ${h.titulo}`,`
@@ -653,6 +707,7 @@ function editarPunto(hid){
     <div class="modal-actions"><button class="btn ghost" id="hp-cancel">Cancelar</button><button class="btn primary" id="hp-ok">Guardar</button></div>`);
   $("#hp-cancel").addEventListener("click",closeModal);
   $("#hp-ok").addEventListener("click",async ()=>{ const patch={ destino:$("#hp-dest").value||"AJUSTE" }; const est=$("#hp-est").value; if(est!==h.estado) patch.estado=est;
+    if(h.destino==="CLIENTE"&&patch.destino!=="CLIENTE") patch.mail_texto=null;
     try{ await aapi("aud_hallazgo_save",{ id:hid, patch, quien:quien() }); closeModal(); await recargarCliente(); toast("Punto actualizado ✓"); }catch(ex){ toast(ex.message,true); } });
 }
 function bindRevision(root, run){
@@ -664,6 +719,7 @@ function bindRevision(root, run){
   $$("[data-fmas]",root).forEach(b=>b.addEventListener("click",()=>editarFila(+b.dataset.fmas)));
   $$("[data-ffoto]",root).forEach(b=>b.addEventListener("click",()=>{ if(pedirQuien()) fotoFila(+b.dataset.ffoto); }));
   $$("[data-hedit]",root).forEach(b=>b.addEventListener("click",()=>editarPunto(+b.dataset.hedit)));
+  $$("[data-hcli]",root).forEach(b=>b.addEventListener("click",()=>pedirAlCliente(+b.dataset.hcli)));
   $$("[data-fadd]",root).forEach(b=>b.addEventListener("click",()=>agregarFila(+b.dataset.fadd)));
   $$("[data-dennis]",root).forEach(b=>b.addEventListener("click",()=>respuestaDennis(+b.dataset.dennis)));
   $$("[data-hok]",root).forEach(b=>b.addEventListener("click",async ()=>{ if(!pedirQuien()) return;
