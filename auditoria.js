@@ -365,7 +365,23 @@ function fotoFila(id){
 /* ---- Mail al cliente: se ve como va a salir, con la foto de QuickBooks y la del extracto ---- */
 const MES_EN=["January","February","March","April","May","June","July","August","September","October","November","December"];
 /* Va al mail el punto con destino CLIENTE y cualquier otro que tenga pedido escrito (botón «Pedir al cliente» de la Revisión). */
-const pideCliente = (h)=>h.destino==="CLIENTE"||!!String(h.mail_texto||"").trim();
+const pideCliente = (h)=>h.codigo==="A01"?h.destino==="CLIENTE":h.destino==="CLIENTE"||!!String(h.mail_texto||"").trim();
+/* Documento faltante (código A01): Matías elige por qué falta. Falta acceso = se pide al cliente; error nuestro = lo corrige el equipo. */
+function faltaHtml(h){
+  if(h.codigo!=="A01"||!HALL_ABIERTO(h)) return "";
+  const cli=h.destino==="CLIENTE";
+  return `<div class="rv-falta"><b>Falta este documento. ¿Por qué?</b>
+    <button type="button" class="rv-dbtn cambiar ${cli?"on":""}" data-falta="${h.id}" data-fval="CLIENTE" aria-pressed="${cli}">El cliente no dio acceso</button>
+    <button type="button" class="rv-dbtn sacar ${cli?"":"on"}" data-falta="${h.id}" data-fval="AJUSTE" aria-pressed="${!cli}">Error nuestro</button>
+    <span class="muted">${cli?"Va en el mail al cliente.":"Lo resuelve el equipo; no va al mail."}</span></div>`;
+}
+async function elegirFalta(hid,destino){
+  const h=A.exp.hallazgos.find(x=>x.id===hid);
+  if(h.destino===destino) return;
+  const patch={ destino };
+  if(destino==="CLIENTE"&&!String(h.mail_texto||"").trim()) patch.mail_texto="We do not have this document yet. Please grant us access or send us a copy.";
+  try{ await aapi("aud_hallazgo_save",{ id:hid, patch, quien:quien() }); await recargarCliente(); toast(destino==="CLIENTE"?"Se pide al cliente ✓":"Marcado como error nuestro ✓"); }catch(ex){ toast(ex.message,true); }
+}
 const puntosMail = (run)=>puntosDe(run.id).filter(h=>pideCliente(h)&&HALL_ABIERTO(h));
 const fotoMail = (h,t)=>fotosDe(x=>x.hallazgo_id===h.id&&x.tipo===t);
 function faltanMail(run){ return puntosMail(run).filter(h=>!String(h.mail_texto||"").trim()||!fotoMail(h,"QuickBooks").length||!fotoMail(h,"Extracto").length); }
@@ -589,7 +605,7 @@ function puntoCard(h){
         ${marcaVisible?` <span class="rv-marca ${marca[1]}">${marca[0]}</span>`:""}${h.destino!=="CLIENTE"&&pideCliente(h)&&A.rvis!=="cliente"?` <span class="rv-marca cli">También al cliente</span>`:""}</div>
       ${h.monto!=null?`<span class="rv-monto">${money2(h.monto)}</span>`:""}${est}
       ${A.rmodo?`<span class="rv-dec">${REV_BOTONES.map(b=>`<button type="button" class="rv-dbtn ${b[1]} ${h.revision_estado===b[0]?"on":""}" data-rev="${h.id}" data-rtipo="${b[0]}" aria-pressed="${h.revision_estado===b[0]}">${b[0]}</button>`).join("")}</span>`:h.revision_estado?`<span class="rv-marca rev">${esc(h.revision_estado)}</span>`:""}</div>
-    <div class="rv-cuerpo">${h.revision_estado?`<div class="rv-revnota"><b>Revisión: ${esc(h.revision_estado)}${h.revision_por?` · ${esc(h.revision_por)}`:""}</b>${h.revision_nota?` — ${esc(h.revision_nota)}`:""}</div>`:""}<div class="rv-txt"><div><b>Qué pasa:</b> ${esc(h.detalle||"—")}</div><div><b>Qué hacer:</b> ${esc(h.recomendacion||"—")}</div>
+    <div class="rv-cuerpo">${faltaHtml(h)}${h.revision_estado?`<div class="rv-revnota"><b>Revisión: ${esc(h.revision_estado)}${h.revision_por?` · ${esc(h.revision_por)}`:""}</b>${h.revision_nota?` — ${esc(h.revision_nota)}`:""}</div>`:""}<div class="rv-txt"><div><b>Qué pasa:</b> ${esc(h.detalle||"—")}</div><div><b>Qué hacer:</b> ${esc(h.recomendacion||"—")}</div>
       ${h.respuesta_dennis?`<div class="rv-dennis"><b>Dennis:</b> ${esc(h.respuesta_dennis)}</div>`:""}</div>
     ${fs.length?`<div class="ax-scroll"><table class="ip-table rv-tabla"><thead><tr><th>✓</th><th>Fecha</th><th>Num</th><th class="l">Payee</th><th class="r">Monto</th><th class="l">Está en</th><th class="l">Pasar a / qué hacer</th><th class="l">Estado</th><th></th></tr></thead><tbody>
       ${fs.map(f=>`<tr class="${hecha(f)?"rv-ok":""} ${f.estado==="Ya no aparece"?"rv-ya":""}">
@@ -775,6 +791,7 @@ function bindRevision(root, run){
   $$("[data-ffoto]",root).forEach(b=>b.addEventListener("click",()=>{ if(pedirQuien()) fotoFila(+b.dataset.ffoto); }));
   $$("[data-hedit]",root).forEach(b=>b.addEventListener("click",()=>editarPunto(+b.dataset.hedit)));
   $$("[data-hcli]",root).forEach(b=>b.addEventListener("click",()=>pedirAlCliente(+b.dataset.hcli)));
+  $$("[data-falta]",root).forEach(b=>b.addEventListener("click",()=>elegirFalta(+b.dataset.falta,b.dataset.fval)));
   $$("[data-fadd]",root).forEach(b=>b.addEventListener("click",()=>agregarFila(+b.dataset.fadd)));
   $$("[data-dennis]",root).forEach(b=>b.addEventListener("click",()=>respuestaDennis(+b.dataset.dennis)));
   $$("[data-hok]",root).forEach(b=>b.addEventListener("click",async ()=>{ if(!pedirQuien()) return;
