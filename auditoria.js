@@ -14,7 +14,7 @@ const HALL_ABIERTO = (h)=>h.estado==="Abierto"||h.estado==="Repetido";
 const DESTINOS = ["AJUSTE","CLIENTE","CIERRE ANUAL","DEFINIR","DEFINIDO","CONTROL"];
 const CTRL_ESTADOS = ["OK","DIFERENCIA","SIN DATO","N/A","Pendiente"];
 const MODULOS = { A:"A · Insumos y calidad de datos", B:"B · Conciliaciones", C:"C · P&L", D:"D · Diario y memos", E:"E · Activos", F:"F · Clasificación", G:"G · Red flags y gobierno" };
-const A = { pin:"", view:"lista", cid:null, tab:"revision", runs:[], abiertos:[], exp:null, cfil:"todos", rrun:null, rfil:"pend", lv:"empresas", avance:[], hq:"",
+const A = { pin:"", view:"lista", cid:null, tab:"revision", runs:[], abiertos:[], exp:null, cfil:"todos", rrun:null, rfil:"pend", rvis:"corregir", rab:new Set(), lv:"empresas", avance:[], hq:"",
   ff:{ empresas:{}, pend:{ estado:"Pendiente" } }, tb:{ empresas:{ sort:null, fil:{} }, pend:{ sort:null, fil:{} } } };
 // Revisión: los pasos de Dennis (mismos textos que la plantilla «Revisión … – HECHA» del skill).
 const PASOS_DENNIS = { "0":"Repetidos y cambios de reglas de la Nota anterior: hechos", "1":"Misc ≈ $0",
@@ -73,7 +73,7 @@ async function cargarResumen(){ const d=await aapi("aud_resumen"); A.runs=d.runs
 async function verCliente(cid, runId){
   A.cid=cid; A.view="cliente";
   A.exp=await aapi("aud_cliente",{ cliente_id:cid });
-  A.rrun=(runsConRevision()[0]||A.exp.runs[0])?.id ?? null; A.tab=runsConRevision().length?"revision":"auditorias"; A.rfil="pend"; A.hq="";
+  A.rrun=(runsConRevision()[0]||A.exp.runs[0])?.id ?? null; A.tab=runsConRevision().length?"revision":"auditorias"; A.rfil="pend"; A.rvis="corregir"; A.rab=new Set(); A.hq="";
   if(runId && A.exp.runs.some(r=>r.id===runId)){ A.rrun=runId; A.tab="revision"; }
   renderExp();
 }
@@ -535,6 +535,10 @@ const hecha = (f)=>CORR_HECHAS.includes(f.estado);
 const filasRev = (hs)=>hs.flatMap(h=>filasDe(h.id).filter(f=>HALL_ABIERTO(h)||f.estado!=="Pendiente"));
 function periodoRev(r){ const m=String(r.reporte_dennis||"").split("\n")[0].match(/Revisi[oó]n (.+)$/); return m?m[1].trim():periodoTxt(r); }
 
+/* Vistas de la Revisión, según lo que hay que hacer con cada punto. Un punto con pedido escrito sale también en «Pedir al cliente». */
+const VISTAS = [["corregir","Corregir"],["cliente","Pedir al cliente"],["dennis","Consultar con Dennis"],["otros","Otros"]];
+const enVista = (h,v)=>v==="cliente"?pideCliente(h):v==="dennis"?["DEFINIR","DEFINIDO"].includes(h.destino):v==="otros"?["CONTROL","CIERRE ANUAL"].includes(h.destino):!["CLIENTE","DEFINIR","DEFINIDO","CONTROL","CIERRE ANUAL"].includes(h.destino);
+const vistaDe = (h)=>VISTAS.map(v=>v[0]).find(v=>v!=="cliente"&&enVista(h,v))||"cliente";
 function tabRevision(root){
   const run=runSel();
   const hs=run?puntosDe(run.id):[];
@@ -542,7 +546,9 @@ function tabRevision(root){
   const filas=filasRev(hs);
   const nOk=filas.filter(hecha).length, pctF=filas.length?Math.round(nOk*100/filas.length):0;
   const resueltos=hs.filter(h=>!HALL_ABIERTO(h)).length;
-  const vis=(h)=>A.rfil==="todo"||HALL_ABIERTO(h);
+  const visible=(h)=>A.rfil==="todo"||HALL_ABIERTO(h);
+  const vis=(h)=>visible(h)&&enVista(h,A.rvis);
+  const hayVisibles=hs.some(vis);
   root.innerHTML=`
     <div class="rv-top chart-card wide">
       <div class="rv-top-l">
@@ -555,10 +561,14 @@ function tabRevision(root){
         <div class="ax-seg">${[["pend","Pendientes"],["todo","Todo"]].map(s=>`<button class="tab ${A.rfil===s[0]?"active":""}" data-rf="${s[0]}">${s[1]}</button>`).join("")}</div>
       </div>
     </div>
-    <div class="rr-note">Tildá cada fila cuando la corrijas en QuickBooks y, si querés, agregá la foto con <b>📷</b>. Si la hiciste distinto o no corresponde, usá <b>⋯</b>.</div>
+    <div class="rv-vistas">
+      <div class="ax-seg">${VISTAS.map(v=>{ const n=hs.filter(h=>visible(h)&&enVista(h,v[0])).length; return `<button class="tab ${A.rvis===v[0]?"active":""}" data-rvis="${v[0]}">${v[1]} <span class="rv-n">${n}</span></button>`; }).join("")}</div>
+      ${hayVisibles?`<div class="rv-plegar"><button class="btn ghost sm" data-rtodos="1">Abrir todos</button><button class="btn ghost sm" data-rtodos="0">Plegar todos</button></div>`:""}
+    </div>
+    <div class="rr-note">Abrí un punto y tildá cada fila cuando la corrijas en QuickBooks. Usá <b>📷</b> para la foto y <b>⋯</b> si la hiciste distinto o no corresponde.</div>
     ${PASO_ORDEN.map(k=>{ const g=hs.filter(h=>(h.paso||"otros")===k&&vis(h)); if(!g.length) return "";
       return `<div class="rv-paso"><div class="rv-paso-tit">${k==="otros"?"Otros controles":`Paso ${esc(k)} · ${esc(PASOS_DENNIS[k]||"")}`}</div>${g.map(puntoCard).join("")}</div>`; }).join("")
-      || `<div class="empty">✔ No queda nada pendiente en esta auditoría.</div>`}`;
+      || `<div class="empty">${hs.some(visible)?"✔ No queda nada pendiente en esta vista.":"✔ No queda nada pendiente en esta auditoría."}</div>`}`;
   bindRevision(root, run);
   bindFotos(root);
 }
@@ -569,11 +579,14 @@ function puntoCard(h){
   const est = h.estado==="Resuelto" ? `<span class="rv-est ok">✔ Resuelto${h.resuelto_fecha?` · ${fechaCorta(h.resuelto_fecha)}`:""}</span>`
     : h.estado==="Descartado" ? `<span class="rv-est off">Descartado</span>`
     : fs.length ? `<span class="rv-est">${ok} de ${fs.length}</span>` : `<span class="rv-est">Abierto</span>`;
-  return `<div class="rv-punto ${HALL_ABIERTO(h)?"":"cerrado"}" id="rv-h${h.id}">
-    <div class="rv-head"><span class="rv-ref">${esc(h.ref)}</span>
-      <div class="rv-h-tit"><b>${esc(h.titulo)}</b>${h.monto!=null&&!String(h.titulo).includes("$")?` <span class="muted">— ${money2(h.monto)}</span>`:""}
-        ${marca?` <span class="rv-marca ${marca[1]}">${marca[0]}</span>`:""}${h.destino!=="CLIENTE"&&pideCliente(h)?` <span class="rv-marca cli">También al cliente · va en el mail</span>`:""}</div>${est}</div>
-    <div class="rv-txt"><div><b>Qué pasa:</b> ${esc(h.detalle||"—")}</div><div><b>Qué hacer:</b> ${esc(h.recomendacion||"—")}</div>
+  const abierto=A.rab.has(h.id);
+  const marcaVisible=marca&&!(A.rvis==="cliente"&&h.destino==="CLIENTE")&&!(A.rvis==="dennis"&&h.destino==="DEFINIR");
+  return `<div class="rv-punto ${HALL_ABIERTO(h)?"":"cerrado"} ${abierto?"abierto":""}" id="rv-h${h.id}">
+    <div class="rv-head" role="button" tabindex="0" aria-expanded="${abierto}" data-rab="${h.id}"><span class="rv-caret" aria-hidden="true">▸</span><span class="rv-ref">${esc(h.ref)}</span>
+      <div class="rv-h-tit"><b>${esc(h.titulo)}</b>
+        ${marcaVisible?` <span class="rv-marca ${marca[1]}">${marca[0]}</span>`:""}${h.destino!=="CLIENTE"&&pideCliente(h)&&A.rvis!=="cliente"?` <span class="rv-marca cli">También al cliente</span>`:""}</div>
+      ${h.monto!=null?`<span class="rv-monto">${money2(h.monto)}</span>`:""}${est}</div>
+    <div class="rv-cuerpo"><div class="rv-txt"><div><b>Qué pasa:</b> ${esc(h.detalle||"—")}</div><div><b>Qué hacer:</b> ${esc(h.recomendacion||"—")}</div>
       ${h.respuesta_dennis?`<div class="rv-dennis"><b>Dennis:</b> ${esc(h.respuesta_dennis)}</div>`:""}</div>
     ${fs.length?`<div class="ax-scroll"><table class="ip-table rv-tabla"><thead><tr><th>✓</th><th>Fecha</th><th>Num</th><th class="l">Payee</th><th class="r">Monto</th><th class="l">Está en</th><th class="l">Pasar a / qué hacer</th><th class="l">Estado</th><th></th></tr></thead><tbody>
       ${fs.map(f=>`<tr class="${hecha(f)?"rv-ok":""} ${f.estado==="Ya no aparece"?"rv-ya":""}">
@@ -596,7 +609,7 @@ function puntoCard(h){
       ${!fs.length?(HALL_ABIERTO(h)?`<button class="btn primary sm" data-hok="${h.id}">✔ Marcar resuelto</button>`:`<button class="btn ghost sm" data-hreab="${h.id}">Reabrir</button>`):""}
       ${HALL_ABIERTO(h)&&h.destino!=="CLIENTE"?`<button class="btn ghost sm" data-hcli="${h.id}" title="${pideCliente(h)?"Editar o quitar el pedido al cliente":"Agrega este punto al mail al cliente, sin cambiar lo que hay que corregir"}">✉️ ${pideCliente(h)?"Pedido al cliente":"Pedir al cliente"}</button>`:""}
       <button class="btn ghost sm" data-hedit="${h.id}" title="Cambiar el destino o descartar el punto">⋯ Punto</button>
-    </div></div>`;
+    </div></div></div>`;
 }
 
 /* Respuesta a Dennis (su plantilla HECHA) armada con lo tildado. */
@@ -713,6 +726,11 @@ function editarPunto(hid){
 function bindRevision(root, run){
   $("#rv-quien",root).addEventListener("change",e=>{ try{ localStorage.setItem("qb_aud_quien",e.target.value.trim()); }catch(_){} renderExp(); });
   $$("[data-rf]",root).forEach(b=>b.addEventListener("click",()=>{ A.rfil=b.dataset.rf; renderExp(); }));
+  $$("[data-rvis]",root).forEach(b=>b.addEventListener("click",()=>{ A.rvis=b.dataset.rvis; renderExp(); }));
+  const plegar=(h,abrir)=>{ const id=+h.dataset.rab; abrir?A.rab.add(id):A.rab.delete(id); h.parentElement.classList.toggle("abierto",abrir); h.setAttribute("aria-expanded",abrir); };
+  $$("[data-rab]",root).forEach(h=>{ h.addEventListener("click",()=>plegar(h,!A.rab.has(+h.dataset.rab)));
+    h.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); plegar(h,!A.rab.has(+h.dataset.rab)); } }); });
+  $$("[data-rtodos]",root).forEach(b=>b.addEventListener("click",()=>$$("[data-rab]",root).forEach(h=>plegar(h,b.dataset.rtodos==="1"))));
   $$(".rv-chk",root).forEach(c=>c.addEventListener("change",()=>{
     if(!pedirQuien()){ c.checked=!c.checked; return; }
     guardarFila(+c.dataset.fid,{ estado:c.checked?"Corregido":"Pendiente" }); }));
@@ -765,7 +783,7 @@ function tabAuditorias(root){
   $("#ax-nueva",root).addEventListener("click",()=>editarRun(null));
   $$("[data-det]",root).forEach(d=>d.addEventListener("toggle",()=>{ A[d.dataset.det]=d.open; }));
   bindRun(root);
-  $$("[data-go]",root).forEach(a=>a.addEventListener("click",e=>{ e.preventDefault(); A.rfil="todo"; A.tab="revision"; renderExp(); $("#rv-h"+a.dataset.go)?.scrollIntoView({behavior:"smooth",block:"start"}); }));
+  $$("[data-go]",root).forEach(a=>a.addEventListener("click",e=>{ e.preventDefault(); const h=A.exp.hallazgos.find(x=>x.id===+a.dataset.go); A.rfil="todo"; A.tab="revision"; if(h){ A.rvis=vistaDe(h); A.rab.add(h.id); } renderExp(); $("#rv-h"+a.dataset.go)?.scrollIntoView({behavior:"smooth",block:"start"}); }));
   $("#rv-copy",root)?.addEventListener("click",async ()=>{
     try{ await navigator.clipboard.writeText($("#rv-texto").textContent); toast("Respuesta copiada ✓ — pegala en el mail a Dennis"); }catch(ex){ toast("No se pudo copiar",true); } });
 }
