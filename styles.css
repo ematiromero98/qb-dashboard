@@ -786,3 +786,23 @@ td.saving{opacity:.5}
   .ml-mail{padding:14px}.ml-slots{grid-template-columns:1fr}
   .hx-fila{grid-template-columns:44px 1fr;gap:4px 10px}.hx-det,.hx-fila .ax-fotos,.hx-quien{grid-column:2}.hx-quien{text-align:left}
 }
+/* Estado por cliente (Expedientes) */
+.es-kpis{grid-template-columns:repeat(6,minmax(0,1fr))}
+.es-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;align-items:start}
+.es-card{display:flex;flex-direction:column;gap:8px;padding:14px 16px;margin:0}
+.es-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.es-nom{all:unset;cursor:pointer;font-weight:700;font-size:15px;color:var(--txt)}.es-nom:hover{color:var(--menta)}
+.es-nom:focus-visible{outline:2px solid var(--menta);outline-offset:2px;border-radius:4px}
+.es-meta,.es-sub{color:var(--muted);font-size:12px}.es-meta{display:flex;align-items:center;gap:6px;margin-top:2px}
+.es-est{font-size:11.5px;font-weight:700;border:1px solid;border-radius:99px;padding:2px 9px;white-space:nowrap}
+.es-c-amber{color:var(--amber)}.es-c-blue{color:var(--blue)}.es-c-muted{color:var(--muted)}.es-c-menta{color:var(--menta)}
+.es-chips{display:flex;flex-wrap:wrap;gap:6px}
+.es-chip{font-size:12px;border-radius:7px;padding:2px 8px;background:var(--bg2);border:1px solid var(--line)}
+.es-t-corregir{color:var(--amber)}.es-t-cliente{color:var(--blue)}.es-t-dennis{color:var(--violet)}.es-t-equipo{color:var(--muted)}.es-t-ok{color:var(--menta)}
+.es-det summary{cursor:pointer;font-size:13px;font-weight:600}
+.es-grupo h4{margin:10px 0 4px;font-size:11.5px;text-transform:uppercase;letter-spacing:.3px}
+.es-grupo ul{list-style:none;margin:0;padding:0;color:var(--txt)}
+.es-grupo li{display:grid;grid-template-columns:40px 1fr auto;gap:2px 8px;padding:5px 0;border-top:1px solid var(--line);font-size:12.5px}
+.es-ref{font-family:ui-monospace,Consolas,monospace;color:var(--muted)}.es-mon{text-align:right;white-space:nowrap}
+.es-fil{grid-column:2/4;color:var(--muted);font-size:11.5px}.es-ped{color:var(--menta)}
+@media(max-width:760px){.es-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.es-grid{grid-template-columns:1fr}}

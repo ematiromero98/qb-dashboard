@@ -14,7 +14,7 @@ const HALL_ABIERTO = (h)=>h.estado==="Abierto"||h.estado==="Repetido";
 const DESTINOS = ["AJUSTE","CLIENTE","CIERRE ANUAL","DEFINIR","DEFINIDO","CONTROL"];
 const CTRL_ESTADOS = ["OK","DIFERENCIA","SIN DATO","N/A","Pendiente"];
 const MODULOS = { A:"A · Insumos y calidad de datos", B:"B · Conciliaciones", C:"C · P&L", D:"D · Diario y memos", E:"E · Activos", F:"F · Clasificación", G:"G · Red flags y gobierno" };
-const A = { pin:"", view:"lista", cid:null, tab:"revision", runs:[], abiertos:[], exp:null, cfil:"todos", rrun:null, rfil:"pend", rvis:"corregir", rab:new Set(), rord:{}, rmodo:false, lv:"empresas", avance:[], hq:"",
+const A = { pin:"", view:"lista", cid:null, tab:"revision", runs:[], abiertos:[], exp:null, cfil:"todos", rrun:null, rfil:"pend", rvis:"corregir", rab:new Set(), rord:{}, est:null, ef:{ est:"", bk:"", q:"" }, rmodo:false, lv:"empresas", avance:[], hq:"",
   ff:{ empresas:{}, pend:{ estado:"Pendiente" }, cliente:{} }, tb:{ empresas:{ sort:null, fil:{} }, pend:{ sort:null, fil:{} }, cliente:{ sort:null, fil:{} } } };
 // Revisión: los pasos de Dennis (mismos textos que la plantilla «Revisión … – HECHA» del skill).
 const PASOS_DENNIS = { "0":"Repetidos y cambios de reglas de la Nota anterior: hechos", "1":"Misc ≈ $0",
@@ -69,7 +69,7 @@ async function entrarExp(cid){
     $("#xa-err-close").addEventListener("click",cerrarExp); }
 }
 function cerrarExp(){ $("#aud").classList.add("hidden"); }
-async function cargarResumen(){ const d=await aapi("aud_resumen"); A.runs=d.runs; A.abiertos=d.abiertos; A.avance=d.avance||[]; }
+async function cargarResumen(){ const d=await aapi("aud_resumen"); A.runs=d.runs; A.abiertos=d.abiertos; A.avance=d.avance||[]; A.est=null; }
 async function verCliente(cid, runId){
   A.cid=cid; A.view="cliente";
   A.exp=await aapi("aud_cliente",{ cliente_id:cid });
@@ -115,7 +115,7 @@ const conRevision = () => A.runs.filter(r=>(avanceDe(r)?.puntos||0)>0);
 const pendiente = r => (avanceDe(r)?.puntos_abiertos||0)>0;
 function vistaSeg(){
   const n=conRevision().filter(pendiente).length, nc=A.runs.filter(r=>(avanceDe(r)?.puntos_cliente||0)>0).length;
-  return `<div class="ax-seg ax-vistas">${[["empresas","📁 Empresas"],["pend",`⏳ Pendientes de corregir <span class="cnt">${n}</span>`],["cliente",`✉️ Pendiente del cliente <span class="cnt">${nc}</span>`]]
+  return `<div class="ax-seg ax-vistas">${[["empresas","📁 Empresas"],["pend",`⏳ Pendientes de corregir <span class="cnt">${n}</span>`],["cliente",`✉️ Pendiente del cliente <span class="cnt">${nc}</span>`],["estado","📊 Estado por cliente"]]
     .map(v=>`<button class="tab ${A.lv===v[0]?"active":""}" data-lv="${v[0]}">${v[1]}</button>`).join("")}</div>`;
 }
 const priOf = c => PRIOS.includes(c?.prioridad)?c.prioridad:"Media";
@@ -307,6 +307,7 @@ function abrirPop(th,v,body){
 }
 function renderLista(body){
   cerrarPop();
+  if(A.lv==="estado") return renderEstado(body);
   const v=A.lv==="pend"||A.lv==="cliente"?A.lv:"empresas", Q=A.ff[v], base=filasVista(v);
   const opts=t=>[...new Set(base.map(t.val))].sort((a,b)=>comparar(a,b));
   body.innerHTML=`${vistaSeg()}
@@ -333,6 +334,70 @@ function renderLista(body){
     verCliente(+tr.dataset.cid, tr.dataset.run?+tr.dataset.run:undefined)
       .then(()=>{ if(v==="cliente"){ A.tab="mail"; renderExp(); } })
       .catch(ex=>toast(ex.message,true)); });
+}
+
+/* ================= ESTADO POR CLIENTE =================
+   Una tarjeta por auditoría con Revisión: avance, qué queda abierto por tipo,
+   quién trabajó y lo que decidió el equipo. Se carga al abrir la pestaña. */
+const ES_TIPOS = [["corregir","Corregir"],["cliente","Al cliente"],["dennis","Consultar con Dennis"],["equipo","Del equipo"]];
+const ES_ESTADOS = [["En curso","amber"],["Solo falta cliente o Dennis","blue"],["Sin empezar","muted"],["Terminada","menta"]];
+const tipoPunto = (h)=>pideCliente(h)?"cliente":["DEFINIR","DEFINIDO"].includes(h.destino)?"dennis":["CONTROL","CIERRE ANUAL"].includes(h.destino)?"equipo":"corregir";
+function filasEstado(){
+  const runs=Object.fromEntries(A.runs.map(r=>[r.id,r]));
+  return A.est.runs.filter(e=>runs[e.run_id]).map(e=>{
+    const r=runs[e.run_id], c=cliDe(e.cliente_id), ab=A.est.abiertos.filter(h=>h.run_id===e.run_id).map(h=>({ ...h, tipo:tipoPunto(h) }));
+    const pt=Object.fromEntries(ES_TIPOS.map(([k])=>[k,ab.filter(h=>h.tipo===k).length]));
+    const estado=!ab.length?"Terminada":!e.hechas?"Sin empezar":!pt.corregir&&!pt.equipo?"Solo falta cliente o Dennis":"En curso";
+    return { e, r, c, ab, pt, estado, bk:c.bookkeeper_default||"—", pct:e.filas?Math.round(e.hechas*100/e.filas):(ab.length?0:100) };
+  }).sort((a,b)=>ES_ESTADOS.findIndex(x=>x[0]===a.estado)-ES_ESTADOS.findIndex(x=>x[0]===b.estado)||b.pct-a.pct||a.c.nombre.localeCompare(b.c.nombre));
+}
+function tarjetaEstado(f){
+  const { e, r, c, ab, pt }=f, col=ES_ESTADOS.find(x=>x[0]===f.estado)[1];
+  const extras=[e.no_pregunta?`${e.no_pregunta} no se ${e.no_pregunta===1?"pregunta":"preguntan"} al cliente`:"", e.no_corr?`${e.no_corr} filas «No corresponde»`:"",
+    e.descartados?`${e.descartados} descartado${e.descartados===1?"":"s"}`:"", `memoria: ${e.mem_vigente} vigente${e.mem_vigente===1?"":"s"}${e.mem_propuesta?`, ${e.mem_propuesta} propuesta${e.mem_propuesta===1?"":"s"}`:""}`].filter(Boolean);
+  const grupos=ES_TIPOS.map(([k,t])=>{ const ps=ab.filter(h=>h.tipo===k); if(!ps.length) return "";
+    return `<div class="es-grupo es-t-${k}"><h4>${t}</h4><ul>${ps.map(h=>`<li><span class="es-ref">${esc(h.ref)}</span><span>${esc(h.titulo)}</span><span class="es-mon">${money2(h.monto)}</span>
+      <span class="es-fil">${h.filas?`${h.pendientes} de ${h.filas} filas pendientes`:"sin filas: se cierra con «Marcar resuelto»"}${h.pedido_breana_at?' · <b class="es-ped">Pedido a Breana</b>':""}</span></li>`).join("")}</ul></div>`; }).join("");
+  return `<article class="es-card chart-card">
+    <div class="es-head"><div><button type="button" class="es-nom" data-escid="${c.id}" data-esrun="${r.id}" title="Abrir la Revisión">${esc(c.nombre)}</button>
+      <div class="es-meta">${semDot(r.semaforo)} ${esc(f.bk)} · ${esc(periodoTxt(r))} · auditoría del ${fechaCorta(r.fecha)}</div></div>
+      <span class="es-est es-c-${col}">${esc(f.estado)}</span></div>
+    <div class="rv-prog"><div class="rv-bar ax-mini"><i style="width:${f.pct}%"></i></div><span><b>${e.hechas}</b> de ${e.filas} filas · <b>${e.resueltos}</b> de ${e.puntos} puntos</span></div>
+    <div class="es-chips">${ES_TIPOS.filter(([k])=>pt[k]).map(([k,t])=>`<span class="es-chip es-t-${k}">${t} <b>${pt[k]}</b></span>`).join("")||'<span class="es-chip es-t-ok">Nada abierto</span>'}</div>
+    <div class="es-sub">Trabajó: ${e.quien?esc(e.quien):"nadie todavía"}${e.ultimo_tilde?` · último tilde ${fechaCorta(String(e.ultimo_tilde).slice(0,10))}`:""}</div>
+    <div class="es-sub">${esc(extras.join(" · "))}</div>
+    ${ab.length?`<details class="es-det"><summary>Qué queda abierto (${ab.length})</summary>${grupos}</details>`:""}
+  </article>`;
+}
+async function renderEstado(body){
+  if(!A.est){
+    body.innerHTML=`${vistaSeg()}<div class="rr-load">Cargando…</div>`;
+    $$("[data-lv]",body).forEach(b=>b.addEventListener("click",()=>{ A.lv=b.dataset.lv; renderExp(); }));
+    try{ A.est=await aapi("aud_estado"); }catch(ex){ body.querySelector(".rr-load").textContent="No se pudo cargar: "+ex.message; return; }
+    if(A.lv!=="estado"||A.view!=="lista") return;
+  }
+  const todas=filasEstado(), F=A.ef;
+  const lista=todas.filter(f=>(!F.est||f.estado===F.est)&&(!F.bk||f.bk===F.bk)&&(!F.q||`${f.c.nombre} ${f.bk}`.toLowerCase().includes(F.q.toLowerCase())));
+  const cnt=(k)=>todas.filter(f=>f.estado===k).length, abT=todas.reduce((t,f)=>t+f.ab.length,0), cliT=todas.reduce((t,f)=>t+f.pt.cliente,0);
+  body.innerHTML=`${vistaSeg()}
+    <div class="ax-kpis es-kpis">
+      <div class="ax-kpi"><b>${todas.length}</b><span>auditorías con Revisión</span></div>
+      ${ES_ESTADOS.map(([k,col])=>`<div class="ax-kpi"><b class="es-c-${col}">${cnt(k)}</b><span>${k.toLowerCase()}</span></div>`).join("")}
+      <div class="ax-kpi"><b>${abT}</b><span>puntos abiertos (${cliT} al cliente)</span></div>
+    </div>
+    <div class="ax-filtros">
+      <input id="es-q" type="search" placeholder="Buscar empresa o bookkeeper…" value="${esc(F.q)}">
+      <div class="ax-seg">${[["","Todas"],...ES_ESTADOS].map(([k])=>`<button class="tab ${F.est===k?"active":""}" data-esf="${esc(k)}">${k||"Todas"}</button>`).join("")}</div>
+      <label class="ax-fil"><span>Bookkeeper</span><select id="es-bk"><option value="">Todos</option>${[...new Set(todas.map(f=>f.bk))].sort().map(b=>`<option ${F.bk===b?"selected":""}>${esc(b)}</option>`).join("")}</select></label>
+      <span class="muted ax-cuenta">${lista.length} de ${todas.length}</span>
+    </div>
+    <div class="es-grid">${lista.map(tarjetaEstado).join("")||'<div class="empty">Nada con estos filtros.</div>'}</div>
+    <div class="rr-note">Tocá el nombre de un cliente para abrir su Revisión. Un punto al cliente que quedó resuelto sin respuesta cuenta como «no se pregunta».</div>`;
+  $$("[data-lv]",body).forEach(b=>b.addEventListener("click",()=>{ A.lv=b.dataset.lv; renderExp(); }));
+  $$("[data-esf]",body).forEach(b=>b.addEventListener("click",()=>{ F.est=b.dataset.esf; renderEstado(body); }));
+  $("#es-bk",body).addEventListener("change",e=>{ F.bk=e.target.value; renderEstado(body); });
+  $("#es-q",body).addEventListener("input",e=>{ F.q=e.target.value; const pos=e.target.selectionStart; renderEstado(body).then(()=>{ const q=$("#es-q",body); q.focus(); q.setSelectionRange(pos,pos); }); });
+  $$("[data-escid]",body).forEach(b=>b.addEventListener("click",()=>verCliente(+b.dataset.escid,+b.dataset.esrun).catch(ex=>toast(ex.message,true))));
 }
 
 /* ================= EXPEDIENTE DE UN CLIENTE ================= */

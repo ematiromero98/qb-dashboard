@@ -490,6 +490,21 @@ Deno.serve(async (req) => {
         return json({ runs: runs.data ?? [], abiertos: hall.data ?? [], avance: avance.data ?? [] });
       }
 
+      // Pestaña «Estado por cliente»: avance de cada auditoría y sus puntos abiertos.
+      case 'aud_estado': {
+        const { data: runs, error } = await db.from('qb_aud_estado_runs').select('*');
+        if (error) throw error;
+        const abiertos: any[] = [];
+        for (let from = 0; ; from += 1000) {
+          const { data, error: e2 } = await db.from('qb_aud_estado_abiertos').select('*')
+            .order('run_id').order('orden').order('id').range(from, from + 999);
+          if (e2) throw e2;
+          abiertos.push(...(data ?? []));
+          if (!data || data.length < 1000) break;
+        }
+        return json({ runs: runs ?? [], abiertos });
+      }
+
       // Expediente completo de un cliente. Es también el contexto que lee el
       // skill antes de empezar una auditoría.
       case 'aud_cliente': {
