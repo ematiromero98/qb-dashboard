@@ -14,7 +14,7 @@ const HALL_ABIERTO = (h)=>h.estado==="Abierto"||h.estado==="Repetido";
 const DESTINOS = ["AJUSTE","CLIENTE","CIERRE ANUAL","DEFINIR","DEFINIDO","CONTROL"];
 const CTRL_ESTADOS = ["OK","DIFERENCIA","SIN DATO","N/A","Pendiente"];
 const MODULOS = { A:"A · Insumos y calidad de datos", B:"B · Conciliaciones", C:"C · P&L", D:"D · Diario y memos", E:"E · Activos", F:"F · Clasificación", G:"G · Red flags y gobierno" };
-const A = { pin:"", view:"lista", cid:null, tab:"revision", runs:[], abiertos:[], exp:null, cfil:"todos", rrun:null, rfil:"pend", rvis:"corregir", rab:new Set(), rmodo:false, lv:"empresas", avance:[], hq:"",
+const A = { pin:"", view:"lista", cid:null, tab:"revision", runs:[], abiertos:[], exp:null, cfil:"todos", rrun:null, rfil:"pend", rvis:"corregir", rab:new Set(), rord:{}, rmodo:false, lv:"empresas", avance:[], hq:"",
   ff:{ empresas:{}, pend:{ estado:"Pendiente" } }, tb:{ empresas:{ sort:null, fil:{} }, pend:{ sort:null, fil:{} } } };
 // Revisión: los pasos de Dennis (mismos textos que la plantilla «Revisión … – HECHA» del skill).
 const PASOS_DENNIS = { "0":"Repetidos y cambios de reglas de la Nota anterior: hechos", "1":"Misc ≈ $0",
@@ -73,7 +73,7 @@ async function cargarResumen(){ const d=await aapi("aud_resumen"); A.runs=d.runs
 async function verCliente(cid, runId){
   A.cid=cid; A.view="cliente";
   A.exp=await aapi("aud_cliente",{ cliente_id:cid });
-  A.rrun=(runsConRevision()[0]||A.exp.runs[0])?.id ?? null; A.tab=runsConRevision().length?"revision":"auditorias"; A.rfil="pend"; A.rvis="corregir"; A.rab=new Set(); A.hq="";
+  A.rrun=(runsConRevision()[0]||A.exp.runs[0])?.id ?? null; A.tab=runsConRevision().length?"revision":"auditorias"; A.rfil="pend"; A.rvis="corregir"; A.rab=new Set(); A.rord={}; A.hq="";
   if(runId && A.exp.runs.some(r=>r.id===runId)){ A.rrun=runId; A.tab="revision"; }
   renderExp();
 }
@@ -583,7 +583,7 @@ function tabRevision(root){
       <div class="ax-seg">${VISTAS.map(v=>{ const n=hs.filter(h=>visible(h)&&enVista(h,v[0])).length; return `<button class="tab ${A.rvis===v[0]?"active":""}" data-rvis="${v[0]}">${v[1]} <span class="rv-n">${n}</span></button>`; }).join("")}</div>
       ${hayVisibles?`<div class="rv-plegar"><button class="btn ghost sm" data-rtodos="1">Abrir todos</button><button class="btn ghost sm" data-rtodos="0">Plegar todos</button></div>`:""}
     </div>
-    <div class="rr-note">${A.rmodo?"Decidí cada punto: <b>OK</b> queda como está, <b>Sacar</b> lo descarta, <b>Cambiar</b> deja qué corregir y <b>Ya lo sé</b> lo descarta y propone el criterio para la memoria. Tocá de nuevo la opción elegida para deshacerla.":"Abrí un punto y tildá cada fila cuando la corrijas en QuickBooks. Usá <b>📷</b> para la foto y <b>⋯</b> si la hiciste distinto o no corresponde."}</div>
+    <div class="rr-note">${A.rmodo?"Decidí cada punto: <b>OK</b> queda como está, <b>Sacar</b> lo descarta, <b>Cambiar</b> deja qué corregir y <b>Ya lo sé</b> lo descarta y propone el criterio para la memoria. Tocá de nuevo la opción elegida para deshacerla.":"Abrí un punto y tildá cada fila cuando la corrijas en QuickBooks. Tocá el título de una columna para ordenar las filas, por ejemplo por <b>Payee</b>. Usá <b>📷</b> para la foto y <b>⋯</b> si la hiciste distinto o no corresponde."}</div>
     ${PASO_ORDEN.map(k=>{ const g=hs.filter(h=>(h.paso||"otros")===k&&vis(h)); if(!g.length) return "";
       return `<div class="rv-paso"><div class="rv-paso-tit">${k==="otros"?"Otros controles":`Paso ${esc(k)} · ${esc(PASOS_DENNIS[k]||"")}`}</div>${g.map(puntoCard).join("")}</div>`; }).join("")
       || `<div class="empty">${hs.some(visible)?"✔ No queda nada pendiente en esta vista.":"✔ No queda nada pendiente en esta auditoría."}</div>`}`;
@@ -619,6 +619,37 @@ function tildarPunto(hid,marcar){
     renderExp(); const b=$("#ax-body"); if(b) b.scrollTop=y; });
 }
 
+/* Orden de las filas de un punto: es solo de la pantalla, no se guarda ni cambia el mail al cliente. */
+const RV_COLS = [{ k:"fecha", t:"Fecha" },{ k:"num", t:"Num" },{ k:"payee", t:"Payee", c:"l" },{ k:"monto", t:"Monto", c:"r" },
+  { k:"de", t:"Está en", c:"l" },{ k:"a", t:"Pasar a / qué hacer", c:"l" },{ k:"estado", t:"Estado", c:"l" }];
+function valFila(f,k){
+  if(k==="monto") return f.monto==null||f.monto===""?null:Number(f.monto);
+  if(k==="fecha"){ const m=String(f.fecha||"").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m?`${m[3]}-${m[1].padStart(2,"0")}-${m[2].padStart(2,"0")}`:f.fecha; }
+  return f[k];
+}
+function filasOrdenadas(hid,fs){
+  const o=A.rord[hid]; if(!o) return fs;
+  return [...fs].sort((x,y)=>{ const a=valFila(x,o.k), b=valFila(y,o.k);
+    return a==null||a===""||b==null||b===""?comparar(a,b):o.d*comparar(a,b); });
+}
+function cabezaFilas(h,fs){
+  const o=A.rord[h.id];
+  return `<tr><th>✓</th>${RV_COLS.map(c=>{ const on=o?.k===c.k, flecha=on?(o.d>0?"↑":"↓"):"";
+    return `<th class="${c.c||""}"${on?` aria-sort="${o.d>0?"ascending":"descending"}"`:""}>${fs.length>1?`<button type="button" class="rv-ord ${on?"on":""}" data-rord="${h.id}" data-rk="${c.k}" title="Ordenar por ${c.t}">${c.t}${flecha?` <span aria-hidden="true">${flecha}</span>`:""}</button>`:c.t}</th>`; }).join("")}<th></th></tr>`;
+}
+function ordenMovil(h,fs){
+  if(fs.length<2) return "";
+  const o=A.rord[h.id];
+  return `<label class="rv-ord-mov">Ordenar por <select data-rordm="${h.id}"><option value="">Como vino</option>${RV_COLS.map(c=>`<option value="${c.k}" ${o?.k===c.k?"selected":""}>${c.t}</option>`).join("")}</select></label>`;
+}
+function ordenarFilas(hid,orden,foco){
+  const ab=$("#ax-body"), y=ab?ab.scrollTop:0;
+  if(orden) A.rord[hid]=orden; else delete A.rord[hid];
+  renderExp();
+  const nb=$("#ax-body"); if(nb) nb.scrollTop=y;
+  if(foco) $(foco)?.focus({ preventScroll:true });
+}
+
 function puntoCard(h){
   const fs=filasDe(h.id), ok=fs.filter(hecha).length;
   const marca=MARCA[h.destino];
@@ -635,8 +666,8 @@ function puntoCard(h){
       ${A.rmodo?`<span class="rv-dec">${REV_BOTONES.map(b=>`<button type="button" class="rv-dbtn ${b[1]} ${h.revision_estado===b[0]?"on":""}" data-rev="${h.id}" data-rtipo="${b[0]}" aria-pressed="${h.revision_estado===b[0]}">${b[0]}</button>`).join("")}</span>`:h.revision_estado?`<span class="rv-marca rev">${esc(h.revision_estado)}</span>`:""}</div>
     <div class="rv-cuerpo">${faltaHtml(h)}${h.revision_estado?`<div class="rv-revnota"><b>Revisión: ${esc(h.revision_estado)}${h.revision_por?` · ${esc(h.revision_por)}`:""}</b>${h.revision_nota?` — ${esc(h.revision_nota)}`:""}</div>`:""}<div class="rv-txt"><div><b>Qué pasa:</b> ${esc(h.detalle||"—")}</div><div><b>Qué hacer:</b> ${esc(h.recomendacion||"—")}</div>
       ${h.respuesta_dennis?`<div class="rv-dennis"><b>Dennis:</b> ${esc(h.respuesta_dennis)}</div>`:""}</div>
-    ${fs.length?`<div class="ax-scroll"><table class="ip-table rv-tabla"><thead><tr><th>✓</th><th>Fecha</th><th>Num</th><th class="l">Payee</th><th class="r">Monto</th><th class="l">Está en</th><th class="l">Pasar a / qué hacer</th><th class="l">Estado</th><th></th></tr></thead><tbody>
-      ${fs.map(f=>`<tr class="${hecha(f)?"rv-ok":""} ${f.estado==="Ya no aparece"?"rv-ya":""}">
+    ${fs.length?`${ordenMovil(h,fs)}<div class="ax-scroll"><table class="ip-table rv-tabla"><thead>${cabezaFilas(h,fs)}</thead><tbody>
+      ${filasOrdenadas(h.id,fs).map(f=>`<tr class="${hecha(f)?"rv-ok":""} ${f.estado==="Ya no aparece"?"rv-ya":""}">
         <td data-label="✓">${f.estado==="Pendiente"||f.estado==="Corregido"
           ?`<input type="checkbox" class="rv-chk" data-fid="${f.id}" ${f.estado==="Corregido"?"checked":""} title="Corregido">`
           :`<span class="rv-ico" title="${esc(f.estado)}">${CORR_ICONO[f.estado]}</span>`}</td>
@@ -820,6 +851,10 @@ function bindRevision(root, run){
   $$(".rv-chk:not([data-hchk])",root).forEach(c=>c.addEventListener("change",()=>{
     if(!pedirQuien()){ c.checked=!c.checked; return; }
     guardarFila(+c.dataset.fid,{ estado:c.checked?"Corregido":"Pendiente" }); }));
+  $$("[data-rord]",root).forEach(b=>b.addEventListener("click",()=>{ const hid=+b.dataset.rord, k=b.dataset.rk, o=A.rord[hid];
+    ordenarFilas(hid,o?.k!==k?{ k, d:1 }:o.d>0?{ k, d:-1 }:null,`[data-rord="${hid}"][data-rk="${k}"]`); }));
+  $$("[data-rordm]",root).forEach(s=>s.addEventListener("change",()=>{ const hid=+s.dataset.rordm;
+    ordenarFilas(hid,s.value?{ k:s.value, d:1 }:null,`[data-rordm="${hid}"]`); }));
   $$("[data-fmas]",root).forEach(b=>b.addEventListener("click",()=>editarFila(+b.dataset.fmas)));
   $$("[data-ffoto]",root).forEach(b=>b.addEventListener("click",()=>{ if(pedirQuien()) fotoFila(+b.dataset.ffoto); }));
   $$("[data-hedit]",root).forEach(b=>b.addEventListener("click",()=>editarPunto(+b.dataset.hedit)));
