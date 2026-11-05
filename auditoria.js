@@ -15,7 +15,7 @@ const DESTINOS = ["AJUSTE","CLIENTE","CIERRE ANUAL","DEFINIR","DEFINIDO","CONTRO
 const CTRL_ESTADOS = ["OK","DIFERENCIA","SIN DATO","N/A","Pendiente"];
 const MODULOS = { A:"A · Insumos y calidad de datos", B:"B · Conciliaciones", C:"C · P&L", D:"D · Diario y memos", E:"E · Activos", F:"F · Clasificación", G:"G · Red flags y gobierno" };
 const A = { pin:"", view:"lista", cid:null, tab:"revision", runs:[], abiertos:[], exp:null, cfil:"todos", rrun:null, rfil:"pend", rvis:"corregir", rab:new Set(), rord:{}, rmodo:false, lv:"empresas", avance:[], hq:"",
-  ff:{ empresas:{}, pend:{ estado:"Pendiente" } }, tb:{ empresas:{ sort:null, fil:{} }, pend:{ sort:null, fil:{} } } };
+  ff:{ empresas:{}, pend:{ estado:"Pendiente" }, cliente:{} }, tb:{ empresas:{ sort:null, fil:{} }, pend:{ sort:null, fil:{} }, cliente:{ sort:null, fil:{} } } };
 // Revisión: los pasos de Dennis (mismos textos que la plantilla «Revisión … – HECHA» del skill).
 const PASOS_DENNIS = { "0":"Repetidos y cambios de reglas de la Nota anterior: hechos", "1":"Misc ≈ $0",
   "2":"Total Expense > $350: memos leídos, cuenta correcta", "3":"Payroll: S&W del P&L = bruto YTD Datatech/AME",
@@ -114,14 +114,51 @@ const avanceDe = r => A.avance.find(a=>a.run_id===r.id);
 const conRevision = () => A.runs.filter(r=>(avanceDe(r)?.puntos||0)>0);
 const pendiente = r => (avanceDe(r)?.puntos_abiertos||0)>0;
 function vistaSeg(){
-  const n=conRevision().filter(pendiente).length;
-  return `<div class="ax-seg ax-vistas">${[["empresas","📁 Empresas"],["pend",`⏳ Pendientes de corregir <span class="cnt">${n}</span>`]]
+  const n=conRevision().filter(pendiente).length, nc=A.runs.filter(r=>(avanceDe(r)?.puntos_cliente||0)>0).length;
+  return `<div class="ax-seg ax-vistas">${[["empresas","📁 Empresas"],["pend",`⏳ Pendientes de corregir <span class="cnt">${n}</span>`],["cliente",`✉️ Pendiente del cliente <span class="cnt">${nc}</span>`]]
     .map(v=>`<button class="tab ${A.lv===v[0]?"active":""}" data-lv="${v[0]}">${v[1]}</button>`).join("")}</div>`;
 }
 const priOf = c => PRIOS.includes(c?.prioridad)?c.prioridad:"Media";
 const bucketPuntos = n => n===0?"0":n<=5?"1 a 5":n<=10?"6 a 10":"Más de 10";
+const estadoPedido = (ped,tot)=>ped===0?"Sin pedir":ped<tot?"Pedido en parte":"Pedido";
+const diasPedido = (ts)=>Math.max(0,Math.floor((Date.now()-new Date(ts).getTime())/86400000));
+const diasTxt = (d)=>d===0?"hoy":d===1?"hace 1 día":`hace ${d} días`;
+const diasColor = (d)=>d<=3?"var(--menta)":d<=7?"var(--amber)":"var(--danger,#ff6b6b)";
+function chkPedido(rid,ped,tot,nombre){
+  const parcial=ped>0&&ped<tot;
+  return `<input type="checkbox" class="rv-chk ax-pb" data-pb="${rid}" data-ped="${ped}" data-tot="${tot}" data-nom="${esc(nombre)}" ${ped===tot?"checked":""} ${parcial?'data-parcial="1"':""} aria-label="Pedido a Breana: ${esc(nombre)}" title="${ped===tot?"Quitar la marca":"Marcar como pedido a Breana"}">`;
+}
+function marcarPedido(c){
+  const rid=+c.dataset.pb, ped=+c.dataset.ped, tot=+c.dataset.tot, marcar=ped<tot, falta=tot-ped;
+  const pts=(k)=>`${k} punto${k===1?"":"s"}`;
+  const volver=()=>{ closeModal(); renderExp(); };
+  openModal(marcar?"Pedido a Breana":"Quitar el pedido a Breana",`
+    <p><b>${esc(c.dataset.nom)}</b></p>
+    <p>${marcar?`Se ${falta===1?"marca":"marcan"} ${pts(falta)} como ${falta===1?"pedido":"pedidos"} a Breana.`:`Se quita la marca de ${pts(tot)}. Vuelve${tot===1?"":"n"} a figurar sin pedir.`}</p>
+    ${marcar?`<label>Quién se lo pidió</label><input type="text" id="pb-quien" list="pb-equipo" value="${esc(quien())}"><datalist id="pb-equipo">${EQUIPO.map(n=>`<option value="${n}">`).join("")}</datalist>`:""}
+    <div class="modal-actions"><button class="btn ghost" id="pb-no">Cancelar</button><button class="btn primary" id="pb-si">${marcar?"✔ Marcar como pedido":"Quitar la marca"}</button></div>`);
+  $("#pb-no").addEventListener("click",volver);
+  $("#pb-si").addEventListener("click",async e=>{
+    const q=marcar?$("#pb-quien").value.trim():quien();
+    if(marcar&&!q) return toast("Escribí quién se lo pidió a Breana",true);
+    e.target.disabled=true;
+    try{
+      if(marcar) try{ localStorage.setItem("qb_aud_quien",q); }catch(_){}
+      await aapi("aud_pedido_breana",{ run_id:rid, marcar, quien:q });
+      closeModal();
+      if(A.view==="cliente") await recargarCliente(); else { await cargarResumen(); renderExp(); }
+      toast(marcar?"Marcado como pedido a Breana ✓":"Marca quitada");
+    }catch(ex){ toast(ex.message,true); volver(); }
+  });
+}
 
 function filasVista(v){
+  if(v==="cliente"){
+    const cli=Object.fromEntries(S.clientes.map(c=>[c.id,c]));
+    return A.runs.filter(r=>(avanceDe(r)?.puntos_cliente||0)>0).map(r=>{ const a=avanceDe(r), tot=a.puntos_cliente, ped=a.puntos_cliente_pedidos;
+      return { r, a, c:cli[r.cliente_id]||{ id:r.cliente_id, nombre:"#"+r.cliente_id }, tot, ped, est:estadoPedido(ped,tot), otros:a.puntos_abiertos-tot,
+        dias:a.pedido_breana_at?diasPedido(a.pedido_breana_at):null }; });
+  }
   if(v==="pend"){
     const cli=Object.fromEntries(S.clientes.map(c=>[c.id,c]));
     return conRevision().map(r=>{ const a=avanceDe(r), c=cli[r.cliente_id]||{ nombre:"#"+r.cliente_id }, ok=a.filas-a.filas_pendientes;
@@ -157,6 +194,19 @@ const COLS = {
       html:f=>f.a.ultimo_tilde?fechaCorta(String(f.a.ultimo_tilde).slice(0,10)):'<span class="muted">Sin empezar</span>' },
     { k:"estado", t:"Estado", val:f=>f.pend?0:1, txt:f=>f.pend?"Pendiente":"OK", html:f=>f.pend?'<span class="rv-est">Pendiente</span>':'<span class="rv-est ok">✔ OK</span>' },
   ],
+  cliente:[
+    { k:"empresa", t:"Empresa", val:f=>f.c.nombre, txt:f=>f.c.nombre, html:f=>`<b>${esc(f.c.nombre)}</b>` },
+    { k:"bk", t:"Bookkeeper", val:f=>f.c.bookkeeper_default||"", txt:f=>f.c.bookkeeper_default||"—", html:f=>esc(f.c.bookkeeper_default||"—") },
+    { k:"aud", t:"Auditoría", val:f=>f.r.fecha, txt:f=>periodoTxt(f.r), html:f=>`${fechaCorta(f.r.fecha)} <span class="muted">· ${esc(periodoTxt(f.r))}</span>` },
+    { k:"tot", t:"Puntos a pedir", num:1, val:f=>f.tot, txt:f=>bucketPuntos(f.tot), html:f=>`<b style="color:var(--amber)">${f.tot}</b>` },
+    { k:"ped", t:"Pedido a Breana", val:f=>f.ped/f.tot, txt:f=>f.est,
+      html:f=>`<span class="ax-pb-c">${chkPedido(f.r.id,f.ped,f.tot,f.c.nombre)}<span>${f.ped>0&&f.ped<f.tot?`<b style="color:var(--amber)">${f.ped} de ${f.tot}</b>`:f.ped?"Pedido":'<span class="muted">Sin pedir</span>'}</span></span>` },
+    { k:"quien", t:"Quién lo pidió", val:f=>f.a.pedido_breana_por||"", txt:f=>f.a.pedido_breana_por||"—", html:f=>f.a.pedido_breana_por?esc(f.a.pedido_breana_por):'<span class="muted">—</span>' },
+    { k:"cuando", t:"Cuándo", val:f=>f.a.pedido_breana_at||"", txt:f=>f.a.pedido_breana_at?fechaCorta(String(f.a.pedido_breana_at).slice(0,10)):"—",
+      html:f=>f.a.pedido_breana_at?`${fechaCorta(String(f.a.pedido_breana_at).slice(0,10))} <span style="color:${diasColor(f.dias)}">· ${diasTxt(f.dias)}</span>`:'<span class="muted">—</span>' },
+    { k:"otros", t:"Lo demás", num:1, val:f=>f.otros, txt:f=>f.otros?"Con puntos por corregir":"Solo falta el cliente",
+      html:f=>f.otros?`${f.otros} por corregir`:'<span class="rv-est ok">✔ Solo falta el cliente</span>' },
+  ],
 };
 /* Filtros de arriba */
 const TOPF = {
@@ -174,13 +224,20 @@ const TOPF = {
     { k:"prio", t:"Prioridad", val:f=>priOf(f.c) },
     { k:"periodo", t:"Período", val:f=>periodoTxt(f.r) },
   ],
+  cliente:[
+    { k:"est", t:"Pedido a Breana", val:f=>f.est },
+    { k:"bk", t:"Bookkeeper", val:f=>f.c.bookkeeper_default||"—" },
+    { k:"sit", t:"Lo demás", val:f=>f.otros?"Con puntos por corregir":"Solo falta el cliente" },
+    { k:"prio", t:"Prioridad", val:f=>priOf(f.c) },
+  ],
 };
 function comparar(a,b){
   const va=a==null||a==="", vb=b==null||b===""; if(va||vb) return va&&vb?0:va?1:-1; // lo vacío siempre al final
   return typeof a==="number"&&typeof b==="number" ? a-b : String(a).localeCompare(String(b),"es",{numeric:true,sensitivity:"base"});
 }
 function ordenBase(v,a,b){
-  return v==="pend" ? (b.pend-a.pend)||(b.a.filas_pendientes-a.a.filas_pendientes)||(b.a.puntos_abiertos-a.a.puntos_abiertos)
+  return v==="cliente" ? (a.ped/a.tot-b.ped/b.tot)||(b.tot-a.tot)||a.c.nombre.localeCompare(b.c.nombre)
+    : v==="pend" ? (b.pend-a.pend)||(b.a.filas_pendientes-a.a.filas_pendientes)||(b.a.puntos_abiertos-a.a.puntos_abiertos)
     : (b.cant?1:0)-(a.cant?1:0)||PRIO_RANK[a.p]-PRIO_RANK[b.p]||a.c.nombre.localeCompare(b.c.nombre);
 }
 function aplicarFiltros(v, filas, sinCol){
@@ -196,7 +253,12 @@ function pintarTabla(body,v){
   if(T.sort){ const c=COLS[v].find(x=>x.k===T.sort.k); lista.sort((a,b)=>{ const va=c.val(a), vb=c.val(b);
     if(va==null||va===""||vb==null||vb==="") return comparar(va,vb); return T.sort.dir*comparar(va,vb); }); }
   else lista.sort((a,b)=>ordenBase(v,a,b));
-  $("#ax-kp",body).innerHTML = v==="pend" ? (()=>{ const p=lista.filter(f=>f.pend), s=k=>p.reduce((t,f)=>t+(f.a[k]||0),0);
+  $("#ax-kp",body).innerHTML = v==="cliente" ? `<div class="ax-kpi"><b style="color:var(--amber)">${lista.length}</b><span>auditorías con info pendiente</span></div>
+        <div class="ax-kpi"><b>${lista.reduce((t,f)=>t+f.tot,0)}</b><span>puntos a pedir</span></div>
+        <div class="ax-kpi"><b style="color:var(--amber)">${lista.filter(f=>f.ped<f.tot).length}</b><span>con algo sin pedir a Breana</span></div>
+        <div class="ax-kpi"><b style="color:var(--menta)">${lista.filter(f=>f.ped===f.tot).length}</b><span>pedidas a Breana</span></div>
+        <div class="ax-kpi"><b>${lista.filter(f=>!f.otros).length}</b><span>solo falta el cliente</span></div>`
+    : v==="pend" ? (()=>{ const p=lista.filter(f=>f.pend), s=k=>p.reduce((t,f)=>t+(f.a[k]||0),0);
       return `<div class="ax-kpi"><b style="color:var(--amber)">${p.length}</b><span>auditorías con algo por corregir</span></div>
         <div class="ax-kpi"><b>${s("filas_pendientes")}</b><span>filas sin tildar</span></div>
         <div class="ax-kpi"><b>${s("puntos_abiertos")}</b><span>puntos abiertos</span></div>
@@ -210,8 +272,9 @@ function pintarTabla(body,v){
   $("#ax-limpiar",body).classList.toggle("hidden",!hay);
   $$("th[data-col]",body).forEach(th=>{ const k=th.dataset.col, ord=T.sort?.k===k?(T.sort.dir>0?"↑":"↓"):"", fil=!!T.fil[k];
     th.classList.toggle("on",!!ord||fil); $(".ax-th-i",th).textContent=(fil?"● ":"")+(ord||"▾"); });
-  $("#ax-tb",body).innerHTML = lista.length ? lista.map(f=>`<tr class="ax-row" data-cid="${f.c.id}"${f.r?` data-run="${f.r.id}" title="Abrir la Revisión"`:""}>${COLS[v].map(c=>`<td class="${c.num?"tc":""}" data-label="${esc(c.t)}">${c.html(f)}</td>`).join("")}</tr>`).join("")
-    : `<tr><td colspan="${COLS[v].length}"><div class="empty">Nada con estos filtros.</div></td></tr>`;
+  $("#ax-tb",body).innerHTML = lista.length ? lista.map(f=>`<tr class="ax-row" data-cid="${f.c.id}"${f.r?` data-run="${f.r.id}" title="${v==="cliente"?"Abrir el mail al cliente":"Abrir la Revisión"}"`:""}>${COLS[v].map(c=>`<td class="${c.num?"tc":""}" data-label="${esc(c.t)}">${c.html(f)}</td>`).join("")}</tr>`).join("")
+    : `<tr><td colspan="${COLS[v].length}"><div class="empty">${v==="cliente"&&!todas.length?"✔ No hay información pendiente de ningún cliente.":"Nada con estos filtros."}</div></td></tr>`;
+  $$("[data-pb][data-parcial]",body).forEach(c=>{ c.indeterminate=true; });
 }
 function cerrarPop(){ $("#ax-pop")?.remove(); document.removeEventListener("mousedown",fueraPop); document.removeEventListener("keydown",escPop); }
 function fueraPop(e){ if(!e.target.closest("#ax-pop")) cerrarPop(); }
@@ -244,28 +307,32 @@ function abrirPop(th,v,body){
 }
 function renderLista(body){
   cerrarPop();
-  const v=A.lv==="pend"?"pend":"empresas", Q=A.ff[v], base=filasVista(v);
+  const v=A.lv==="pend"||A.lv==="cliente"?A.lv:"empresas", Q=A.ff[v], base=filasVista(v);
   const opts=t=>[...new Set(base.map(t.val))].sort((a,b)=>comparar(a,b));
   body.innerHTML=`${vistaSeg()}
-    <div class="ax-kpis ${v==="pend"?"ax-k5":""}" id="ax-kp"></div>
+    <div class="ax-kpis ${v==="empresas"?"":"ax-k5"}" id="ax-kp"></div>
     <div class="ax-filtros">
       <input id="ax-q" type="search" placeholder="Buscar empresa o bookkeeper…" value="${esc(Q.q||"")}">
       ${TOPF[v].map(t=>`<label class="ax-fil"><span>${esc(t.t)}</span><select data-tf="${t.k}"><option value="">Todos</option>${opts(t).map(o=>`<option value="${esc(o)}" ${Q[t.k]===o?"selected":""}>${esc(o)}</option>`).join("")}</select></label>`).join("")}
       <button class="btn ghost sm hidden" id="ax-limpiar">✕ Limpiar filtros</button>
       <span class="muted ax-cuenta" id="ax-cuenta"></span>
     </div>
-    <div class="ax-scroll"><table class="audit-table ax-lista ${v==="pend"?"ax-pend":""}"><thead><tr>
+    <div class="ax-scroll"><table class="audit-table ax-lista ${v==="empresas"?"":"ax-pend"}"><thead><tr>
       ${COLS[v].map(c=>`<th class="ax-th" data-col="${c.k}" title="Ordenar y filtrar"><span>${esc(c.t)}</span> <span class="ax-th-i">▾</span></th>`).join("")}
     </tr></thead><tbody id="ax-tb"></tbody></table></div>
-    <div class="rr-note">Tocá el título de una columna para ordenarla o filtrarla.${v==="pend"?" Una auditoría queda <b>OK</b> cuando todos los puntos de su Revisión están resueltos.":""}</div>`;
+    <div class="rr-note">Tocá el título de una columna para ordenarla o filtrarla.${v==="pend"?" Una auditoría queda <b>OK</b> cuando todos los puntos de su Revisión están resueltos.":v==="cliente"?" Tildá <b>Pedido a Breana</b> cuando se lo pidas. La auditoría sale de esta lista cuando se resuelven todos sus puntos a pedir. Tocá una fila para abrir el mail al cliente.":""}</div>`;
   pintarTabla(body,v);
   $$("[data-lv]",body).forEach(b=>b.addEventListener("click",()=>{ A.lv=b.dataset.lv; renderExp(); }));
   $("#ax-q",body).addEventListener("input",e=>{ Q.q=e.target.value; pintarTabla(body,v); });
   $$("[data-tf]",body).forEach(s=>s.addEventListener("change",()=>{ if(s.value) Q[s.dataset.tf]=s.value; else delete Q[s.dataset.tf]; pintarTabla(body,v); }));
   $("#ax-limpiar",body).addEventListener("click",()=>{ A.ff[v]={}; A.tb[v]={ sort:null, fil:{} }; renderLista(body); });
   $$("th[data-col]",body).forEach(th=>th.addEventListener("click",e=>{ e.stopPropagation(); abrirPop(th,v,body); }));
-  $("#ax-tb",body).addEventListener("click",e=>{ const tr=e.target.closest(".ax-row"); if(!tr) return;
-    verCliente(+tr.dataset.cid, tr.dataset.run?+tr.dataset.run:undefined).catch(ex=>toast(ex.message,true)); });
+  $("#ax-tb",body).addEventListener("change",e=>{ if(e.target.matches("[data-pb]")) marcarPedido(e.target); });
+  $("#ax-tb",body).addEventListener("click",e=>{ if(e.target.closest("[data-pb]")) return;
+    const tr=e.target.closest(".ax-row"); if(!tr) return;
+    verCliente(+tr.dataset.cid, tr.dataset.run?+tr.dataset.run:undefined)
+      .then(()=>{ if(v==="cliente"){ A.tab="mail"; renderExp(); } })
+      .catch(ex=>toast(ex.message,true)); });
 }
 
 /* ================= EXPEDIENTE DE UN CLIENTE ================= */
@@ -278,10 +345,8 @@ function renderCliente(body){
   const pend=filasRev(hs).filter(f=>f.estado==="Pendiente").length;
   const propuestas=E.memoria.filter(m=>m.estado==="Propuesta").length;
   const falta=run?faltanMail(run).length:0;
-  const consultas=run?puntosDennis(run).length:0;
   const tabs=[["revision",`Revisión ${pend?`<span class="cnt" title="Filas pendientes de corregir">${pend}</span>`:""}`],
     ["mail",`✉️ Mail al cliente ${falta?`<span class="cnt ax-cnt-warn" title="Puntos a los que les falta foto o texto">${falta}</span>`:""}`],
-    ["dennis",`✉️ Mail a Dennis ${consultas?`<span class="cnt" title="Puntos para consultar con Dennis">${consultas}</span>`:""}`],
     ["auditorias","Auditoría y documentación"],
     ["historial","Historial"],
     ["memoria",`Memoria ${propuestas?`<span class="cnt ax-cnt-prop" title="Propuestas para revisar">${propuestas}</span>`:""}`]];
@@ -305,7 +370,6 @@ function renderCliente(body){
   const t=$("#ax-tab",body);
   if(A.tab==="revision") tabRevision(t);
   else if(A.tab==="mail") tabMail(t);
-  else if(A.tab==="dennis") tabDennis(t);
   else if(A.tab==="auditorias") tabAuditorias(t);
   else if(A.tab==="historial") tabHistorial(t);
   else if(A.tab==="memoria") tabMemoria(t);
@@ -405,6 +469,8 @@ function tabMail(root){
   root.innerHTML=`
     <div class="ml-bar chart-card wide">
       <div id="ml-estado"></div>
+      ${(()=>{ const ped=M.items.filter(it=>it.h.pedido_breana_at), por=[...new Set(ped.map(it=>it.h.pedido_breana_por).filter(Boolean))].join(", "), t=ped.map(it=>it.h.pedido_breana_at).sort()[0];
+        return `<label class="ax-pb-c ml-pb">${chkPedido(run.id,ped.length,M.items.length,cliDe(A.cid).nombre)}<span>Pedido a Breana${ped.length&&ped.length<M.items.length?` <b style="color:var(--amber)">${ped.length} de ${M.items.length}</b>`:""}${t?` <span class="muted">· ${esc(por)} · ${fechaCorta(String(t).slice(0,10))}</span>`:""}</span></label>`; })()}
       <div class="ml-acts"><button class="btn ghost" id="ml-copy">📋 Copiar mail</button><button class="btn primary" id="ml-eml">⬇ Abrir en Outlook</button></div>
     </div>
     <div class="ml-mail">
@@ -424,6 +490,7 @@ function tabMail(root){
       :`<b class="ml-ok">✔ Listo para enviar.</b> <span class="muted">Lo manda Breana.</span>`;
     $$("[data-mgo]",root).forEach(a=>a.addEventListener("click",e=>{ e.preventDefault(); $("#ml-h"+a.dataset.mgo)?.scrollIntoView({behavior:"smooth",block:"start"}); })); };
   pintaEstado();
+  $$("[data-pb]",root).forEach(c=>{ c.indeterminate=!!c.dataset.parcial; c.addEventListener("change",()=>marcarPedido(c)); });
   $$("[data-mt]",root).forEach(t=>{ const alto=()=>{ t.style.height="auto"; t.style.height=t.scrollHeight+"px"; }; alto(); t.addEventListener("input",alto);
     t.addEventListener("change",async ()=>{ const id=+t.dataset.mt, v=t.value.trim();
       try{ await aapi("aud_hallazgo_save",{ id, patch:{ mail_texto:v||null } }); const h=A.exp.hallazgos.find(x=>x.id===id); h.mail_texto=v||null; pintaEstado(); }
@@ -468,51 +535,15 @@ function mailTxt(m){
 function b64Utf8(s){ return btoa(unescape(encodeURIComponent(s))); }
 const lineas76 = (s)=>s.replace(/(.{76})/g,"$1\r\n");
 /* .eml sin enviar (X-Unsent): Outlook lo abre como mail nuevo, con las fotos adentro. */
-function bajarEml(m,armar=mailHtml){
+function bajarEml(m){
   const lim="=_qb_"+Date.now(), fotos=m.items.flatMap(it=>[...it.qb,...it.ext]);
   fotos.forEach((f,i)=>{ f.cid=`foto${i+1}@chermisqui`; });
-  const html=armar(m,f=>"cid:"+f.cid);
+  const html=mailHtml(m,f=>"cid:"+f.cid);
   const partes=[`--${lim}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${lineas76(b64Utf8(html))}`,
     ...fotos.map((f,i)=>`--${lim}\r\nContent-Type: ${f.tipoMime}; name="foto${i+1}"\r\nContent-Transfer-Encoding: base64\r\nContent-ID: <${f.cid}>\r\nContent-Disposition: inline; filename="foto${i+1}"\r\n\r\n${lineas76(f.b64)}`)];
   const eml=`X-Unsent: 1\r\nSubject: =?UTF-8?B?${b64Utf8(m.asunto)}?=\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; boundary="${lim}"\r\n\r\n${partes.join("\r\n")}\r\n--${lim}--\r\n`;
   const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([eml],{type:"message/rfc822"}));
-  a.download=`Mail - ${cliDe(A.cid).nombre.replace(/[\\/:*?"<>|]/g,"")}${m.archivo||""}.eml`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),5000);
-}
-
-/* ---- Mail a Dennis: los puntos «Consultar con Dennis». Es un aviso: no bloquea nada. ---- */
-const puntosDennis = (run)=>puntosDe(run.id).filter(h=>h.destino==="DEFINIR"&&HALL_ABIERTO(h));
-function dennisDatos(run){
-  const cli=cliDe(A.cid).nombre, per=periodoRev(run);
-  return { archivo:" - Dennis", asunto:`${cli} – Consultas ${per}`,
-    intro:`Te consulto estos puntos de la revisión de ${cli} (${per}).`,
-    items:puntosDennis(run).map((h,i)=>({ n:i+1, h, filas:filasMail(h), qb:[], ext:[] })), firma:["Gracias,",quien()||"Matías Romero"] };
-}
-const descFila = (f)=>[f.num,f.payee].filter(Boolean).join(" · ");
-function dennisHtml(m){
-  const td='style="border:1px solid #bbb;padding:5px 8px"', th='style="border:1px solid #bbb;padding:5px 8px;background:#eee;text-align:left"';
-  return `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#000"><p>Hola Dennis,</p><p>${esc(m.intro)}</p>`+
-    m.items.map(it=>`<p style="margin:18px 0 4px"><b>${it.n}. ${esc(it.h.titulo)}</b></p><p style="margin:0 0 4px">${esc(it.h.detalle||"")}</p><p style="margin:0 0 8px"><b>Consulta:</b> ${esc(it.h.recomendacion||"")}</p>
-      ${it.filas.length?`<table style="border-collapse:collapse;font-size:10pt"><tr><th ${th}>Fecha</th><th ${th}>Detalle</th><th ${th}>Monto</th><th ${th}>Está en</th></tr>${it.filas.map(f=>`<tr><td ${td}>${esc(f.fecha||"")}</td><td ${td}>${esc(descFila(f))}</td><td ${td} align="right">${money2(f.monto)}</td><td ${td}>${esc(f.de||"")}</td></tr>`).join("")}</table>`:""}`).join("")+
-    `<p style="margin-top:18px">${m.firma.map(esc).join("<br>")}</p></div>`;
-}
-function dennisTxt(m){
-  return ["Hola Dennis,","",m.intro,"",...m.items.flatMap(it=>[`${it.n}. ${it.h.titulo}`,it.h.detalle||"",`Consulta: ${it.h.recomendacion||""}`,...it.filas.map(f=>`   ${[f.fecha,descFila(f),money2(f.monto),f.de].filter(Boolean).join(" | ")}`),""]),...m.firma].join("\r\n");
-}
-function tabDennis(root){
-  const run=runSel(); if(!run){ root.innerHTML=`<div class="empty">Todavía no hay auditorías de este cliente.</div>`; return; }
-  const M=dennisDatos(run);
-  if(!M.items.length){ root.innerHTML=`<div class="empty">En esta auditoría no hay nada para consultar con Dennis.</div>`; return; }
-  root.innerHTML=`<div class="ml-bar chart-card wide"><div><b>${M.items.length} punto${M.items.length===1?"":"s"} para consultar.</b> <span class="muted">Es un aviso: nada queda bloqueado. Lo que conteste se anota en cada punto de la Revisión.</span></div>
-      <div class="ml-acts"><button class="btn ghost" id="md-copy">📋 Copiar mail</button><button class="btn primary" id="md-eml">⬇ Abrir en Outlook</button></div></div>
-    <div class="ml-mail"><div class="ml-asunto"><span>Asunto</span> ${esc(M.asunto)}</div><p>Hola Dennis,</p><p>${esc(M.intro)}</p>
-      ${M.items.map(it=>`<div class="ml-item"><div class="ml-ref" title="Solo lo ves vos, no sale en el mail">Punto ${esc(it.h.ref)}</div>
-        <p><b>${it.n}. ${esc(it.h.titulo)}</b></p><p>${esc(it.h.detalle||"")}</p><p><b>Consulta:</b> ${esc(it.h.recomendacion||"")}</p>
-        ${it.filas.length?`<table class="ml-tabla"><thead><tr><th>Fecha</th><th>Detalle</th><th class="r">Monto</th><th>Está en</th></tr></thead><tbody>${it.filas.map(f=>`<tr><td>${esc(f.fecha||"")}</td><td>${esc(descFila(f))}</td><td class="r">${money2(f.monto)}</td><td>${esc(f.de||"")}</td></tr>`).join("")}</tbody></table>`:""}</div>`).join("")}
-      <p class="ml-firma">${M.firma.map(esc).join("<br>")}</p></div>`;
-  $("#md-copy",root).addEventListener("click",async ()=>{
-    try{ await navigator.clipboard.write([new ClipboardItem({ "text/html":new Blob([dennisHtml(M)],{type:"text/html"}), "text/plain":new Blob([dennisTxt(M)],{type:"text/plain"}) })]); toast("Mail copiado ✓ Pegalo en el correo con Ctrl+V"); }
-    catch(ex){ toast("No se pudo copiar: "+ex.message,true); } });
-  $("#md-eml",root).addEventListener("click",()=>{ bajarEml(M,dennisHtml); toast("Abrí el archivo: se abre en Outlook listo para enviar"); });
+  a.download=`Mail - ${cliDe(A.cid).nombre.replace(/[\\/:*?"<>|]/g,"")}.eml`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),5000);
 }
 
 /* ---- Historial: qué se corrigió, quién y cuándo ---- */
@@ -545,6 +576,7 @@ function tabHistorial(root){
    Dennis armada con lo tildado. */
 const runsConRevision = ()=>(A.exp?.runs||[]).filter(r=>A.exp.hallazgos.some(h=>h.run_id===r.id&&h.ref));
 const quien = ()=>localStorage.getItem("qb_aud_quien")||"";
+const EQUIPO = ["Matías Romero","Sebastián Pita","Manuel Criscuoli","Edward","Nicolás","Martín"];
 const money2 = (v)=>v==null||v===""?"":"$"+Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 const filasDe = (hid)=>(A.exp.correcciones||[]).filter(f=>f.hallazgo_id===hid);
 const hecha = (f)=>CORR_HECHAS.includes(f.estado);
@@ -574,7 +606,7 @@ function tabRevision(root){
       </div>
       <div class="rv-top-r">
         <label class="ax-inl">Trabajando como <input type="text" id="rv-quien" list="rv-equipo" placeholder="Tu nombre" value="${esc(quien())}"></label>
-        <datalist id="rv-equipo">${["Matías Romero","Sebastián Pita","Manuel Criscuoli","Edward","Nicolás","Martín"].map(n=>`<option value="${n}">`).join("")}</datalist>
+        <datalist id="rv-equipo">${EQUIPO.map(n=>`<option value="${n}">`).join("")}</datalist>
         <button class="tab ${A.rmodo?"active":""}" id="rv-modo" title="Muestra en cada punto: OK, Sacar, Cambiar y Ya lo sé">Modo revisión</button>
         <div class="ax-seg">${[["pend","Pendientes"],["todo","Todo"]].map(s=>`<button class="tab ${A.rfil===s[0]?"active":""}" data-rf="${s[0]}">${s[1]}</button>`).join("")}</div>
       </div>
@@ -661,7 +693,7 @@ function puntoCard(h){
   return `<div class="rv-punto ${HALL_ABIERTO(h)?"":"cerrado"} ${abierto?"abierto":""}" id="rv-h${h.id}">
     <div class="rv-head" role="button" tabindex="0" aria-expanded="${abierto}" data-rab="${h.id}"><span class="rv-caret" aria-hidden="true">▸</span>${chkPunto(h,fs)}<span class="rv-ref">${esc(h.ref)}</span>
       <div class="rv-h-tit"><b>${esc(h.titulo)}</b>
-        ${marcaVisible?` <span class="rv-marca ${marca[1]}">${marca[0]}</span>`:""}${h.destino!=="CLIENTE"&&pideCliente(h)&&A.rvis!=="cliente"?` <span class="rv-marca cli">También al cliente</span>`:""}</div>
+        ${marcaVisible?` <span class="rv-marca ${marca[1]}">${marca[0]}</span>`:""}${h.destino!=="CLIENTE"&&pideCliente(h)&&A.rvis!=="cliente"?` <span class="rv-marca cli">También al cliente</span>`:""}${h.pedido_breana_at&&HALL_ABIERTO(h)&&pideCliente(h)?` <span class="rv-marca ok" title="${esc(h.pedido_breana_por||"")} · ${fechaCorta(String(h.pedido_breana_at).slice(0,10))}">Pedido a Breana</span>`:""}</div>
       ${h.monto!=null?`<span class="rv-monto">${money2(h.monto)}</span>`:""}${est}
       ${A.rmodo?`<span class="rv-dec">${REV_BOTONES.map(b=>`<button type="button" class="rv-dbtn ${b[1]} ${h.revision_estado===b[0]?"on":""}" data-rev="${h.id}" data-rtipo="${b[0]}" aria-pressed="${h.revision_estado===b[0]}">${b[0]}</button>`).join("")}</span>`:h.revision_estado?`<span class="rv-marca rev">${esc(h.revision_estado)}</span>`:""}</div>
     <div class="rv-cuerpo">${faltaHtml(h)}${h.revision_estado?`<div class="rv-revnota"><b>Revisión: ${esc(h.revision_estado)}${h.revision_por?` · ${esc(h.revision_por)}`:""}</b>${h.revision_nota?` — ${esc(h.revision_nota)}`:""}</div>`:""}<div class="rv-txt"><div><b>Qué pasa:</b> ${esc(h.detalle||"—")}</div><div><b>Qué hacer:</b> ${esc(h.recomendacion||"—")}</div>

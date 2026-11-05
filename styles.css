@@ -715,6 +715,8 @@ td.saving{opacity:.5}
 .ax-vistas{margin:0 0 12px}.ax-vistas .cnt{margin-left:4px}
 .ax-pend .rv-prog{gap:8px;font-size:12px}.rv-bar.ax-mini{flex:0 0 90px}
 .ax-pend .rv-est{white-space:nowrap}
+.ax-pb-c{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.ml-pb{cursor:pointer;margin:0;font-size:13px;color:var(--txt)}
 .ax-kpis.ax-k5{grid-template-columns:repeat(5,minmax(0,1fr))}
 @media (max-width:760px){.ax-kpis.ax-k5{grid-template-columns:repeat(2,minmax(0,1fr))}}
 

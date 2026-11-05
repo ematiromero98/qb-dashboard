@@ -134,6 +134,8 @@ const norm = (v: unknown) => String(v ?? '').trim().toLowerCase().replace(/\s+/g
 // Reconoce la misma transacción al volver a correr la auditoría.
 const claveCorr = (c: any) => [c?.fecha, c?.num, c?.payee ?? c?.name, c?.monto == null || c?.monto === '' ? '' : Number(c.monto).toFixed(2)].map(norm).join('|');
 const quienDe = (q: unknown) => String(q ?? '').trim().slice(0, 60) || null;
+// Misma regla que pideCliente en auditoria.js y que la vista qb_aud_avance.
+const esPedidoCliente = (h: any) => h.destino === 'CLIENTE' || (h.codigo !== 'A01' && !!String(h.mail_texto ?? '').trim());
 const hoy = () => new Date().toISOString().slice(0, 10);
 const numOrNull = (v: unknown) => (v == null || v === '' || isNaN(Number(v)) ? null : Number(v));
 
@@ -664,6 +666,31 @@ Deno.serve(async (req) => {
           if (r.error) console.error('qb-api aud_correccion_punto log:', r.error); else log = r.data ?? [];
         }
         return json({ ok: true, filas: filas ?? [], hallazgo, log });
+      }
+
+      // Marca lo que falta pedir del cliente como ya pedido a Breana, o quita la marca.
+      // Solo toca los puntos abiertos que van al cliente; lo ya marcado conserva quién y cuándo.
+      case 'aud_pedido_breana': {
+        const runId = Number(body.run_id);
+        if (!runId) return json({ error: 'falta run_id' }, 400);
+        const marcar = body.marcar === true;
+        const quien = quienDe(body.quien);
+        if (marcar && !quien) return json({ error: 'Falta quién se lo pidió a Breana' }, 400);
+        const { data: hs, error: e1 } = await db.from('qb_aud_hallazgos')
+          .select('id, cliente_id, run_id, ref, titulo, monto, destino, codigo, mail_texto, pedido_breana_at')
+          .eq('run_id', runId).in('estado', HALL_ABIERTOS);
+        if (e1) throw e1;
+        const ids = (hs ?? []).filter((h: any) => h.ref && esPedidoCliente(h) && !!h.pedido_breana_at !== marcar);
+        if (!ids.length) return json({ ok: true, hallazgos: [], log: [] });
+        const { data, error } = await db.from('qb_aud_hallazgos')
+          .update(marcar ? { pedido_breana_at: new Date().toISOString(), pedido_breana_por: quien } : { pedido_breana_at: null, pedido_breana_por: null })
+          .in('id', ids.map((h: any) => h.id)).select();
+        if (error) throw error;
+        // Una línea de historial por punto. Si falla no frena la marca.
+        const r = await db.from('qb_aud_log').insert(ids.map((h: any) => ({ cliente_id: h.cliente_id, run_id: h.run_id, hallazgo_id: h.id, ref: h.ref,
+          fila: h.titulo, monto: h.monto, accion: marcar ? 'Pedido a Breana' : 'Se quitó el pedido a Breana', quien }))).select();
+        if (r.error) console.error('qb-api aud_pedido_breana log:', r.error);
+        return json({ ok: true, hallazgos: data ?? [], log: r.data ?? [] });
       }
 
       case 'aud_correccion_add': {
