@@ -688,7 +688,7 @@ function tabRevision(root){
   bindFotos(root);
 }
 
-/* Tilde del punto entero: pasa todas sus filas pendientes a Corregido. */
+/* Tilde del punto entero: pasa las filas pendientes a Corregido, o a «Hecho distinto» / «No corresponde» con justificación. */
 function chkPunto(h,fs){
   const pend=fs.filter(f=>f.estado==="Pendiente").length, corr=fs.filter(f=>f.estado==="Corregido").length;
   if(!fs.length||h.estado==="Descartado"||(!pend&&!corr)) return "";
@@ -699,20 +699,39 @@ function tildarPunto(hid,marcar){
   const h=A.exp.hallazgos.find(x=>x.id===hid), fs=filasDe(hid);
   const n=fs.filter(f=>f.estado===(marcar?"Pendiente":"Corregido")).length, otras=fs.filter(f=>!["Pendiente","Corregido"].includes(f.estado)).length;
   const filas=(k)=>`${k} fila${k===1?"":"s"}`;
+  const ESTS=["Corregido","Hecho distinto","No corresponde"];
   openModal(`Punto ${h.ref}`,`
-    <p>${marcar?`Se marcan como <b>Corregido</b> ${n===1?"la":"las"} ${filas(n)} ${n===1?"pendiente":"pendientes"}, a nombre de <b>${esc(quien())}</b>.`
+    <p>${marcar?`${n===1?"La":"Las"} ${filas(n)} ${n===1?"pendiente se marca":"pendientes se marcan"} a nombre de <b>${esc(quien())}</b>.`
       :`Vuelve${n===1?"":"n"} a <b>Pendiente</b> ${n===1?"la":"las"} ${filas(n)} ${n===1?"corregida":"corregidas"}, también las que se tildaron de a una.`}</p>
     <p class="muted">${esc(h.titulo)}${otras?` · ${filas(otras)} con otro estado no ${otras===1?"cambia":"cambian"}.`:""}</p>
-    <div class="modal-actions"><button class="btn ghost" id="rvp-no">Cancelar</button><button class="btn primary" id="rvp-si">${marcar?"✔ Marcar todo hecho":"Volver a pendiente"}</button></div>`);
+    ${marcar?`<label>Cómo quedó</label><div class="rv-radios">${ESTS.map((e,i)=>`<label><input type="radio" name="rvp-e" value="${e}" ${i?"":"checked"}> ${CORR_ICONO[e]} ${e}</label>`).join("")}</div>
+    <label>Justificación <span class="muted">(opcional si es «Corregido»; obligatoria si se hizo distinto o no corresponde). Sale en la respuesta a Dennis.</span></label>
+    <textarea id="rvp-n" rows="3" placeholder="Ej: se corrigió con un solo asiento de ajuste"></textarea>`:""}
+    <div class="modal-actions"><button class="btn ghost" id="rvp-no">Cancelar</button><button class="btn primary" id="rvp-si">${marcar?"✔ Guardar":"Volver a pendiente"}</button></div>`);
   $("#rvp-no").addEventListener("click",()=>{ closeModal(); renderExp(); });
-  $("#rvp-si").addEventListener("click",async e=>{ e.target.disabled=true; const y=$("#ax-body")?.scrollTop||0;
+  $("#rvp-si").addEventListener("click",async e=>{ const y=$("#ax-body")?.scrollTop||0;
+    const est=marcar?($("input[name=rvp-e]:checked")?.value||"Corregido"):null, nota=marcar?$("#rvp-n").value.trim():"";
+    if(est&&est!=="Corregido"&&!nota) return toast(`«${est}» necesita una justificación`,true);
+    e.target.disabled=true;
     try{
-      const d=await aapi("aud_correccion_punto",{ hallazgo_id:hid, marcar, quien:quien() });
-      d.filas.forEach(f=>{ const i=A.exp.correcciones.findIndex(x=>x.id===f.id); if(i>=0) A.exp.correcciones[i]=f; });
-      if(d.hallazgo){ const j=A.exp.hallazgos.findIndex(x=>x.id===d.hallazgo.id); if(j>=0) A.exp.hallazgos[j]={...A.exp.hallazgos[j],...d.hallazgo}; }
-      if(d.log?.length) A.exp.log=[...d.log,...(A.exp.log||[])];
-      closeModal(); toast(marcar?`Punto ${h.ref}: ${filas(d.filas.length)} ${d.filas.length===1?"marcada":"marcadas"} ✔`:`Punto ${h.ref}: ${filas(d.filas.length)} otra vez ${d.filas.length===1?"pendiente":"pendientes"}`);
-    }catch(ex){ closeModal(); toast(ex.message,true); }
+      if(!marcar||(est==="Corregido"&&!nota)){
+        const d=await aapi("aud_correccion_punto",{ hallazgo_id:hid, marcar, quien:quien() });
+        d.filas.forEach(f=>{ const i=A.exp.correcciones.findIndex(x=>x.id===f.id); if(i>=0) A.exp.correcciones[i]=f; });
+        if(d.hallazgo){ const j=A.exp.hallazgos.findIndex(x=>x.id===d.hallazgo.id); if(j>=0) A.exp.hallazgos[j]={...A.exp.hallazgos[j],...d.hallazgo}; }
+        if(d.log?.length) A.exp.log=[...d.log,...(A.exp.log||[])];
+        closeModal(); toast(marcar?`Punto ${h.ref}: ${filas(d.filas.length)} ${d.filas.length===1?"marcada":"marcadas"} ✔`:`Punto ${h.ref}: ${filas(d.filas.length)} otra vez ${d.filas.length===1?"pendiente":"pendientes"}`);
+      }else{
+        // Con justificación: cada fila pendiente se guarda con su estado y la nota (de a 8 a la vez).
+        const pend=fs.filter(f=>f.estado==="Pendiente"); let ok=0;
+        for(let k=0;k<pend.length;k+=8){
+          const rs=await Promise.all(pend.slice(k,k+8).map(f=>aapi("aud_correccion_save",{ id:f.id, patch:{ estado:est, nota }, quien:quien() })));
+          rs.forEach(d=>{ ok++; const i=A.exp.correcciones.findIndex(x=>x.id===d.fila.id); if(i>=0) A.exp.correcciones[i]=d.fila;
+            if(d.hallazgo){ const j=A.exp.hallazgos.findIndex(x=>x.id===d.hallazgo.id); if(j>=0) A.exp.hallazgos[j]={...A.exp.hallazgos[j],...d.hallazgo}; }
+            if(d.log) (A.exp.log=A.exp.log||[]).unshift(d.log); });
+        }
+        closeModal(); toast(`Punto ${h.ref}: ${filas(ok)} como «${est}» ✔`);
+      }
+    }catch(ex){ closeModal(); toast(ex.message,true); await recargarCliente(); }
     renderExp(); const b=$("#ax-body"); if(b) b.scrollTop=y; });
 }
 
@@ -791,12 +810,20 @@ function puntoCard(h){
 function textoRespuesta(run, hs){
   const cli=cliDe(A.cid).nombre, per=periodoRev(run);
   const base={}; String(run.reporte_dennis||"").split("\n").forEach(l=>{ const m=l.match(/^(✅|❌)\s*([0-9]+|T)\./); if(m) base[m[2]]=m[1]; });
-  const refs=(g)=>g.map(h=>h.ref+(HALL_ABIERTO(h)?" pendiente":"")).join(", ");
+  // Se arma con el estado de cada punto en este momento: abierto = pendiente; cerrado con todas sus filas
+  // «No corresponde» o descartado = no era error (no se lista); el resto = corregido.
+  const sinError=(h)=>h.estado==="Descartado"||(!HALL_ABIERTO(h)&&(()=>{ const fs=filasDe(h.id); return fs.length>0&&fs.every(f=>f.estado==="No corresponde"||f.estado==="Ya no aparece"); })());
+  const cuenta=hs.filter(h=>!sinError(h));
+  const refs=(g)=>g.map(h=>h.ref+(HALL_ABIERTO(h)?(h.destino==="CLIENTE"?" pendiente del cliente":h.destino==="DEFINIR"?" pendiente de consulta":" pendiente"):"")).join(", ");
+  const marca=(g,base)=>g.some(HALL_ABIERTO)?"⏳":g.length||base==="❌"?"❌":"✅";
   const L=[`Asunto: ${cli} – Revisión ${per} – HECHA`,"","Hola Dennis,","",
-    `Revisión de ${cli} (${per}) terminada. ✅ = revisado sin problemas · ❌ = corregido (detalle en los puntos).`,"","Checklist"];
-  Object.keys(PASOS_DENNIS).forEach(k=>{ const g=hs.filter(h=>h.paso===k); const err=g.length>0||base[k]==="❌";
-    L.push(`${err?"❌":"✅"} ${k}. ${PASOS_DENNIS[k]}${CAPTURA[k]?` → 📷 ${CAPTURA[k]}`:""}${g.length?`  (${refs(g)})`:""}`); });
-  const otros=hs.filter(h=>(h.paso||"otros")==="otros"); if(otros.length) L.push(`❌ Otros controles  (${refs(otros)})`);
+    `Revisión de ${cli} (${per}) terminada. ✅ = revisado sin problemas · ❌ = corregido (detalle en los puntos) · ⏳ = pendiente.`,"","Checklist"];
+  Object.keys(PASOS_DENNIS).forEach(k=>{ const g=cuenta.filter(h=>h.paso===k), tuvo=hs.some(h=>h.paso===k);
+    L.push(`${marca(g,tuvo?null:base[k])} ${k}. ${PASOS_DENNIS[k]}${CAPTURA[k]?` → 📷 ${CAPTURA[k]}`:""}${g.length?`  (${refs(g)})`:""}`); });
+  const otros=cuenta.filter(h=>(h.paso||"otros")==="otros"); if(otros.length) L.push(`${marca(otros)} Otros controles  (${refs(otros)})`);
+  const notas=cuenta.flatMap(h=>filasDe(h.id).filter(f=>f.nota&&["Hecho distinto","No corresponde","Corregido"].includes(f.estado))
+    .map(f=>({ h, f }))).reduce((acc,{h,f})=>{ const k=`${h.ref}|${f.estado}|${f.nota}`; (acc[k]=acc[k]||{ h, f, n:0 }).n++; return acc; },{});
+  const nl=Object.values(notas); if(nl.length) L.push("","Aclaraciones",...nl.map(({h,f,n})=>`• ${h.ref} ${n>1?`(${n} filas)`:[f.payee,f.fecha].filter(Boolean).join(" ")} — ${f.estado}: ${f.nota}`));
   L.push("","Capturas",...Object.keys(CAPTURA).map(k=>`[${k}. ${PASOS_DENNIS[k]}: pegar la captura acá]`));
   const def=hs.filter(h=>h.destino==="DEFINIR"&&HALL_ABIERTO(h)); if(def.length) L.push("","Para consultar con vos",...def.map(h=>`• ${h.ref} ${h.titulo}: ${h.recomendacion||""}`));
   const yaDef=hs.filter(h=>h.respuesta_dennis); if(yaDef.length) L.push("","Lo que me dijiste (aplicado)",...yaDef.map(h=>`• ${h.ref} ${h.titulo}: ${h.respuesta_dennis}`));
