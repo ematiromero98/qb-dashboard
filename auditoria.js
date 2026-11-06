@@ -19,12 +19,12 @@ const A = { pin:"", view:"lista", cid:null, tab:"revision", runs:[], abiertos:[]
 // Revisión: los pasos de Dennis (mismos textos que la plantilla «Revisión … – HECHA» del skill).
 const PASOS_DENNIS = { "0":"Repetidos y cambios de reglas de la Nota anterior: hechos", "1":"Misc ≈ $0",
   "2":"Total Expense > $350: memos leídos, cuenta correcta", "3":"Payroll: S&W del P&L = bruto YTD Datatech/AME",
-  "4":"Repairs: nada ≥ $2,500; autos vs equipo", "5":"COGS: Total by Vendor tiene sentido", "6":"Ninguna transacción sin nombre",
+  "4":"Repairs: nada > $5,000; autos vs equipo", "5":"COGS: Total by Vendor tiene sentido", "6":"Ninguna transacción sin nombre",
   "7":"Activos fijos: compras del año en su subcuenta, nada como Repairs, ningún activo faltante", "8":"Payroll Liabilities en $0",
   "9":"Préstamos: cada pago en el préstamo correcto; préstamo nuevo → consultado", "10":"Mail al cliente enviado por Breana (retiros en efectivo / facturas)",
   "T":"Tarjetas y bancos: fecha de la última conciliación de cada uno" };
 const CAPTURA = { "1":"captura", "3":"captura (los dos números)", "6":"captura (filtro Name vacío = sin resultados)",
-  "7":"captura (activos del año + Repairs ≥ $2,500)", "8":"captura del Balance" };
+  "7":"captura (activos del año + Repairs > $5,000)", "8":"captura del Balance" };
 const PASO_ORDEN = [...Object.keys(PASOS_DENNIS), "otros"];
 const CORR_HECHAS = ["Corregido","Hecho distinto","No corresponde","Ya no aparece"];
 const CORR_ICONO = { "Pendiente":"☐", "Corregido":"✔", "Hecho distinto":"✎", "No corresponde":"✕", "Ya no aparece":"—" };
