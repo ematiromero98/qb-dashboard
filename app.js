@@ -110,6 +110,7 @@ function renderView(){
   grid.classList.toggle("hidden", !isGrid);
   panel.classList.toggle("hidden", isGrid);
   empty.classList.add("hidden");
+  $("#kpis").classList.toggle("hidden", S.view==="auditorias");
   if(isGrid) renderGrid();
   else if(S.view==="bookkeeper") renderBookkeeper();
   else if(S.view==="empresa") renderEmpresa();
@@ -457,7 +458,7 @@ function auditTable(rows, M){
     <th>Empresa</th><th>Bookkeeper</th><th>Prioridad</th><th>Frecuencia</th><th>Desde</th><th>Nota / info</th><th>Hecha</th>
     </tr></thead><tbody>${rows.map(c=>auditRow(c,M)).join("")}</tbody></table>`;
 }
-function renderAuditorias(){
+function renderAuditAgenda(){
   const M = S.auditMes || mesActual();
   let cli = S.clientes.filter(c=>c.activo!==false);
   if(S.fbk) cli=cli.filter(c=>c.bookkeeper_default===S.fbk);

@@ -68,7 +68,7 @@ async function entrarExp(cid){
   }catch(ex){ ov.innerHTML=`<div class="rr-load">Error: ${esc(ex.message)} <button class="btn" id="xa-err-close">Cerrar</button></div>`;
     $("#xa-err-close").addEventListener("click",cerrarExp); }
 }
-function cerrarExp(){ $("#aud").classList.add("hidden"); }
+function cerrarExp(){ $("#aud").classList.add("hidden"); if(typeof AP!=="undefined"&&S.view==="auditorias"){ AP.t=0; renderView(); } }
 async function cargarResumen(){ const d=await aapi("aud_resumen"); A.runs=d.runs; A.abiertos=d.abiertos; A.avance=d.avance||[]; A.est=null; }
 async function verCliente(cid, runId){
   A.cid=cid; A.view="cliente";
@@ -522,7 +522,7 @@ function mailDatos(run){
   const cli=cliDe(A.cid).nombre, per=periodoEn(run), hasta=hastaEn(run);
   return { asunto:`${cli} — Items needed${per?` for ${per}`:""}`,
     intro:`We are reviewing your books${hasta?` through ${hasta}`:""} and need your help with the items below. For each one we include how it looks in your books and in your bank statement. Please reply at your earliest convenience.`,
-    cierre:"Please reply to this email with the information.", firma:["Thank you,","","Dennis Chermisqui, CPA","Chermisqui & Associates"],
+    cierre:"Please reply to this email with the information.", firma:["Thanks,"],
     items:puntosMail(run).map((h,i)=>({ n:i+1, h, texto:String(h.mail_texto||"").trim(), filas:filasMail(h), qb:fotoMail(h,"QuickBooks"), ext:fotoMail(h,"Extracto") })) };
 }
 function tabMail(root){

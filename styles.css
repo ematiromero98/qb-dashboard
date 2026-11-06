@@ -806,3 +806,25 @@ td.saving{opacity:.5}
 .es-ref{font-family:ui-monospace,Consolas,monospace;color:var(--muted)}.es-mon{text-align:right;white-space:nowrap}
 .es-fil{grid-column:2/4;color:var(--muted);font-size:11.5px}.es-ped{color:var(--menta)}
 @media(max-width:760px){.es-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.es-grid{grid-template-columns:1fr}}
+
+/* ---- Pestaña Auditorías (tablero por empresa) ---- */
+.ap-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:0 0 14px}
+.ap-subs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.ap-filtros{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px;font-size:12px}
+.ap-filtros .ap-acts{margin-left:auto;display:flex;gap:6px}
+.ap-chip{display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;
+  color:var(--c);border:1px solid color-mix(in srgb,var(--c) 55%,transparent);background:color-mix(in srgb,var(--c) 13%,transparent)}
+.ap-chip.sm{font-size:10px;padding:2px 7px;opacity:.9}
+.ap-ests{display:flex;flex-wrap:wrap;gap:4px}
+.ap-atr{font-size:11.5px;font-weight:700}
+.ap-ok{color:var(--menta)} .ap-warn{color:var(--amber)} .ap-late{color:var(--red)}
+.ap-table td,.ap-table th{white-space:nowrap}
+.ap-table td:first-child a{font-weight:600}
+.ap-mes td.tc,.ap-mes th.tc{text-align:center;min-width:56px}
+.ap-mes td.ap-si{color:var(--menta);font-weight:700;background:var(--menta-soft)}
+.ap-mes td.ap-no{background:rgba(255,107,107,.06)}
+.ap-mes tfoot td{border-top:2px solid var(--line2)}
+.ap-h{margin:4px 0 10px;font-size:14px}
+.ap-lock{max-width:560px}
+.ap-lock .btn{margin-top:8px}
+@media (max-width:700px){ .ap-filtros .ap-acts{margin-left:0} }
