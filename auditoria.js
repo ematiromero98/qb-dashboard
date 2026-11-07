@@ -412,6 +412,7 @@ function renderCliente(body){
   const falta=run?faltanMail(run).length:0;
   const tabs=[["revision",`Revisión ${pend?`<span class="cnt" title="Filas pendientes de corregir">${pend}</span>`:""}`],
     ["mail",`✉️ Mail al cliente ${falta?`<span class="cnt ax-cnt-warn" title="Puntos a los que les falta foto o texto">${falta}</span>`:""}`],
+    ...(run&&(puntosDennis(run).length||consultasDennis(run).length)?[["dennis",`💬 Consulta a Dennis ${puntosDennis(run).length?`<span class="cnt" title="Puntos para consultar con Dennis">${puntosDennis(run).length}</span>`:""}`]]:[]),
     ["auditorias","Auditoría y documentación"],
     ["historial","Historial"],
     ["memoria",`Memoria ${propuestas?`<span class="cnt ax-cnt-prop" title="Propuestas para revisar">${propuestas}</span>`:""}`]];
@@ -435,6 +436,7 @@ function renderCliente(body){
   const t=$("#ax-tab",body);
   if(A.tab==="revision") tabRevision(t);
   else if(A.tab==="mail") tabMail(t);
+  else if(A.tab==="dennis") tabDennis(t);
   else if(A.tab==="auditorias") tabAuditorias(t);
   else if(A.tab==="historial") tabHistorial(t);
   else if(A.tab==="memoria") tabMemoria(t);
@@ -580,9 +582,9 @@ function tabMail(root){
     catch(ex){ toast("No se pudo armar: "+ex.message,true); } });
 }
 /* Baja las fotos para meterlas dentro del mail (las URLs firmadas vencen, por eso se recarga antes). */
-async function mailListo(run){
+async function mailListo(run, datos=mailDatos){
   A.exp=await aapi("aud_cliente",{ cliente_id:A.cid });
-  const m=mailDatos(run);
+  const m=datos(run);
   for(const it of m.items) for(const f of [...it.qb,...it.ext]){
     if(!f.url) throw new Error("no se pudo leer la foto "+f.nombre);
     const blob=await (await fetch(f.url)).blob();
@@ -607,15 +609,73 @@ function mailTxt(m){
 function b64Utf8(s){ return btoa(unescape(encodeURIComponent(s))); }
 const lineas76 = (s)=>s.replace(/(.{76})/g,"$1\r\n");
 /* .eml sin enviar (X-Unsent): Outlook lo abre como mail nuevo, con las fotos adentro. */
-function bajarEml(m){
+function bajarEml(m, armar=mailHtml, pref="Mail"){
   const lim="=_qb_"+Date.now(), fotos=m.items.flatMap(it=>[...it.qb,...it.ext]);
   fotos.forEach((f,i)=>{ f.cid=`foto${i+1}@chermisqui`; });
-  const html=mailHtml(m,f=>"cid:"+f.cid);
+  const html=armar(m,f=>"cid:"+f.cid);
   const partes=[`--${lim}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${lineas76(b64Utf8(html))}`,
     ...fotos.map((f,i)=>`--${lim}\r\nContent-Type: ${f.tipoMime}; name="foto${i+1}"\r\nContent-Transfer-Encoding: base64\r\nContent-ID: <${f.cid}>\r\nContent-Disposition: inline; filename="foto${i+1}"\r\n\r\n${lineas76(f.b64)}`)];
   const eml=`X-Unsent: 1\r\nSubject: =?UTF-8?B?${b64Utf8(m.asunto)}?=\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; boundary="${lim}"\r\n\r\n${partes.join("\r\n")}\r\n--${lim}--\r\n`;
   const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([eml],{type:"message/rfc822"}));
-  a.download=`Mail - ${cliDe(A.cid).nombre.replace(/[\\/:*?"<>|]/g,"")}.eml`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  a.download=`${pref} - ${cliDe(A.cid).nombre.replace(/[\\/:*?"<>|]/g,"")}.eml`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+}
+
+/* ---- Consulta a Dennis: los puntos «Consultar con Dennis» en un mail (como el mail al cliente) ----
+   Al abrirlo en Outlook queda una nota en el expediente con la fecha y los puntos consultados
+   (Matías, 7-nov-2026). Lo que conteste se anota en cada punto con «📝 Anotar lo que dijo Dennis». */
+const DEN_NOTA = "Consulta a Dennis enviada: ";
+const puntosDennis = (run)=>puntosDe(run.id).filter(h=>h.destino==="DEFINIR"&&HALL_ABIERTO(h));
+const consultasDennis = (run)=>(A.exp.notas||[]).filter(n=>n.run_id===run.id&&String(n.texto||"").startsWith(DEN_NOTA))
+  .sort((a,b)=>String(b.creado_at||b.fecha).localeCompare(String(a.creado_at||a.fecha)));
+function dennisDatos(run){
+  const cli=cliDe(A.cid).nombre, per=periodoRev(run);
+  return { asunto:`${cli} – Consultas de la auditoría ${per}`,
+    intro:`En la auditoría de ${cli} (${per}) quedaron estos puntos para consultarte. En cada uno va qué encontramos, qué proponemos y las transacciones.`,
+    cierre:"¿Me decís cómo seguimos con cada uno?", firma:["Gracias,",quien()].filter(Boolean),
+    items:puntosDennis(run).map((h,i)=>({ n:i+1, h, filas:filasDe(h.id).filter(f=>f.estado==="Pendiente"), qb:fotoMail(h,"QuickBooks"), ext:fotoMail(h,"Extracto") })) };
+}
+function dennisHtml(m, src){
+  const td='style="border:1px solid #bbb;padding:5px 8px"', th='style="border:1px solid #bbb;padding:5px 8px;background:#eee;text-align:left"';
+  const fotos=(t,fs)=>fs.length?`<p style="margin:10px 0 4px"><b>${t}</b></p>${fs.map(f=>`<p style="margin:0 0 8px"><img src="${src(f)}" width="${f.ancho||640}" alt="${esc(t)}" style="border:1px solid #bbb;max-width:100%"></p>`).join("")}`:"";
+  return `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#000"><p>Hola Dennis,</p><p>${esc(m.intro)}</p>`+
+    m.items.map(it=>`<p style="margin-top:18px"><b>${it.n}. ${esc(it.h.ref)} – ${esc(it.h.titulo)}</b></p>
+      ${it.h.detalle?`<p style="margin:4px 0"><b>Qué pasa:</b> ${esc(it.h.detalle)}</p>`:""}
+      ${it.h.recomendacion?`<p style="margin:4px 0"><b>Qué proponemos:</b> ${esc(it.h.recomendacion)}</p>`:""}
+      ${it.filas.length?`<table style="border-collapse:collapse;font-size:10pt"><tr><th ${th}>Fecha</th><th ${th}>Num</th><th ${th}>Payee</th><th ${th}>Monto</th><th ${th}>Está en</th><th ${th}>Propuesta</th></tr>${it.filas.map(f=>`<tr><td ${td}>${esc(f.fecha||"")}</td><td ${td}>${esc(f.num||"")}</td><td ${td}>${esc(f.payee||"")}</td><td ${td} align="right">${money2(f.monto)}</td><td ${td}>${esc(f.de||"")}</td><td ${td}>${esc(f.a||"")}</td></tr>`).join("")}</table>`:""}
+      ${fotos("En QuickBooks",it.qb)}${fotos("En el extracto",it.ext)}`).join("")+
+    `<p style="margin-top:18px">${esc(m.cierre)}</p><p>${m.firma.map(esc).join("<br>")}</p></div>`;
+}
+function dennisTxt(m){
+  return ["Hola Dennis,","",m.intro,"",...m.items.flatMap(it=>[`${it.n}. ${it.h.ref} – ${it.h.titulo}`,
+    ...(it.h.detalle?[`Qué pasa: ${it.h.detalle}`]:[]),...(it.h.recomendacion?[`Qué proponemos: ${it.h.recomendacion}`]:[]),
+    ...it.filas.map(f=>`   ${[f.fecha,f.num,f.payee,money2(f.monto),f.de,f.a].filter(Boolean).join(" | ")}`),""]),m.cierre,"",...m.firma].join("\r\n");
+}
+function tabDennis(root){
+  const run=runSel(); if(!run){ root.innerHTML=`<div class="empty">Todavía no hay auditorías de este cliente.</div>`; return; }
+  const m=dennisDatos(run), cons=consultasDennis(run), ult=cons[0];
+  if(!m.items.length){ root.innerHTML=`<div class="empty">No queda ningún punto para consultar con Dennis en esta auditoría.${ult?` Última consulta: ${fechaCorta(String(ult.fecha).slice(0,10))}.`:""}</div>`; return; }
+  const sinConsultar=ult?m.items.filter(it=>!String(ult.texto).slice(DEN_NOTA.length).split(", ").includes(it.h.ref)):m.items;
+  root.innerHTML=`
+    <div class="ml-bar chart-card wide">
+      <div>${ult?`<b class="ml-ok">✔ Consultado a Dennis el ${fechaCorta(String(ult.fecha).slice(0,10))}</b> <span class="muted">· ${esc(ult.autor||"")}${ult.autor?" · ":""}puntos ${esc(String(ult.texto).slice(DEN_NOTA.length))}${diasTxt?` · ${diasTxt(diasPedido(ult.creado_at||ult.fecha))}`:""}</span>`
+        :`<b class="ml-warn">Todavía no se le consultó.</b>`}
+        ${ult&&sinConsultar.length?`<div class="ml-warn">Puntos nuevos sin consultar: ${sinConsultar.map(it=>esc(it.h.ref)).join(", ")}</div>`:""}
+        <div class="muted">Lo que conteste se anota en cada punto de la Revisión con «📝 Anotar lo que dijo Dennis».</div></div>
+      <div class="ml-acts"><button class="btn ghost" id="dn-copy">📋 Copiar mail</button><button class="btn primary" id="dn-eml">⬇ Abrir en Outlook</button></div>
+    </div>
+    <div class="ml-mail"><div class="ml-asunto"><span>Asunto</span> ${esc(m.asunto)}</div>${dennisHtml(m,f=>f.url||"")}</div>
+    ${cons.length>1?`<details class="ml-ant"><summary class="muted">Consultas anteriores (${cons.length-1})</summary><ul>${cons.slice(1).map(n=>`<li>${fechaCorta(String(n.fecha).slice(0,10))}${n.autor?` · ${esc(n.autor)}`:""} — puntos ${esc(String(n.texto).slice(DEN_NOTA.length))}</li>`).join("")}</ul></details>`:""}`;
+  $("#dn-copy",root).addEventListener("click",async ()=>{
+    try{ toast("Armando el mail…"); const mm=await mailListo(run,dennisDatos);
+      await navigator.clipboard.write([new ClipboardItem({ "text/html":new Blob([dennisHtml(mm,f=>f.data)],{type:"text/html"}), "text/plain":new Blob([dennisTxt(mm)],{type:"text/plain"}) })]);
+      toast("Mail copiado ✓ Pegalo en el correo con Ctrl+V"); }
+    catch(ex){ toast("No se pudo copiar: "+ex.message,true); } });
+  $("#dn-eml",root).addEventListener("click",async ()=>{
+    try{ toast("Armando el mail…"); const mm=await mailListo(run,dennisDatos); bajarEml(mm,dennisHtml,"Consulta a Dennis");
+      try{ await aapi("aud_nota_add",{ cliente_id:A.cid, run_id:run.id, texto:DEN_NOTA+mm.items.map(it=>it.h.ref).join(", "), autor:quien()||null, fecha:todayStr() });
+        await recargarCliente(); toast(`Abrí el archivo: se abre en Outlook. Quedó registrado como consultado hoy (${fechaCorta(todayStr())}).`); }
+      catch(ex){ toast("El mail se armó, pero no se pudo registrar la consulta: "+ex.message,true); } }
+    catch(ex){ toast("No se pudo armar: "+ex.message,true); } });
 }
 
 /* ---- Historial: qué se corrigió, quién y cuándo ---- */

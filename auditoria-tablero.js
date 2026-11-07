@@ -216,10 +216,12 @@ function apEspera(rows, tipo){
     const hd=det?new Map(det.hallazgos.map(h=>[h.id,h])):null;
     const segs=det?det.notas.filter(n=>n.run_id===x.run.id&&String(n.texto).startsWith(cliente?AP_SEG:"Dennis: ")):[];
     const d=cliente&&x.consultado?apDias(x.consultado):null;
+    const consD=!cliente&&det?det.notas.filter(n=>n.run_id===x.run.id&&String(n.texto).startsWith("Consulta a Dennis enviada: ")).map(n=>n.fecha).sort().reverse()[0]:null;
     return `<div class="chart-card ap-card">
       <div class="ap-card-h"><a href="#" class="aud-open" data-cid="${x.c.id}"><b>${esc(x.c.nombre)}</b></a>
         <span class="muted">${esc(x.c.bookkeeper_default||"—")} · auditoría ${apFecha(x.run.periodo_desde)}–${apFecha(x.run.periodo_hasta)}</span>
-        ${cliente?(x.consultado?`<span class="ap-dias ${d>14?"ap-late":d>7?"ap-warn":"ap-ok"}">Consultado ${apFecha(x.consultado)} · ${d} días</span>`:`<span class="ap-dias ap-late">Sin consultar</span>`):""}</div>
+        ${cliente?(x.consultado?`<span class="ap-dias ${d>14?"ap-late":d>7?"ap-warn":"ap-ok"}">Consultado ${apFecha(x.consultado)} · ${d} días</span>`:`<span class="ap-dias ap-late">Sin consultar</span>`)
+          :!det?"":consD?(()=>{ const dd=apDias(consD); return `<span class="ap-dias ${dd>14?"ap-late":dd>7?"ap-warn":"ap-ok"}">Consultado a Dennis ${apFecha(consD)} · ${dd} días</span>`; })():`<span class="ap-dias ap-late">Sin consultar a Dennis</span>`}</div>
       <table class="emp-table ap-table"><thead><tr><th>Punto</th><th>Qué se pregunta</th>${cliente?"<th>Consultado</th>":"<th>Qué se recomienda</th>"}</tr></thead><tbody>
       ${pts.map(p=>{ const h=hd?.get(p.id)||p; return `<tr><td class="nw"><b>${esc(p.ref||"")}</b></td>
         <td style="white-space:normal">${esc(p.titulo||"")}${cliente&&h.mail_texto?`<div class="muted ap-en">${esc(h.mail_texto)}</div>`:""}</td>
