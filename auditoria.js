@@ -569,7 +569,14 @@ function tabMail(root){
       toast("Mail copiado ✓ Pegalo en el correo con Ctrl+V"); }
     catch(ex){ toast("No se pudo copiar: "+ex.message,true); } });
   $("#ml-eml",root).addEventListener("click",async ()=>{ if(!seguir()) return;
-    try{ toast("Armando el mail…"); const m=await mailListo(run); bajarEml(m); toast("Abrí el archivo: se abre en Outlook listo para enviar"); }
+    try{ toast("Armando el mail…"); const m=await mailListo(run); bajarEml(m);
+      // Al abrirlo en Outlook queda registrado como pedido al cliente con la fecha de hoy (Matías, 7-nov-2026).
+      const falta=m.items.filter(it=>!it.h.pedido_breana_at).length;
+      if(falta){
+        try{ await aapi("aud_pedido_breana",{ run_id:run.id, marcar:true, quien:quien()||"Mail abierto en Outlook" });
+          await recargarCliente(); toast(`Abrí el archivo: se abre en Outlook. Quedó registrado como pedido hoy (${fechaCorta(todayStr())}).`); }
+        catch(ex){ toast("El mail se armó, pero no se pudo registrar el pedido: "+ex.message,true); }
+      } else toast("Abrí el archivo: se abre en Outlook listo para enviar (ya figuraba como pedido)"); }
     catch(ex){ toast("No se pudo armar: "+ex.message,true); } });
 }
 /* Baja las fotos para meterlas dentro del mail (las URLs firmadas vencen, por eso se recarga antes). */
