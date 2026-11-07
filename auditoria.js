@@ -809,17 +809,21 @@ function puntoCard(h){
 /* Respuesta a Dennis (su plantilla HECHA) armada con lo tildado. */
 function textoRespuesta(run, hs){
   const cli=cliDe(A.cid).nombre, per=periodoRev(run);
-  const base={}; String(run.reporte_dennis||"").split("\n").forEach(l=>{ const m=l.match(/^(✅|❌)\s*([0-9]+|T)\./); if(m) base[m[2]]=m[1]; });
   // Se arma con el estado de cada punto en este momento: abierto = pendiente; cerrado con todas sus filas
   // «No corresponde» o descartado = no era error (no se lista); el resto = corregido.
   const sinError=(h)=>h.estado==="Descartado"||(!HALL_ABIERTO(h)&&(()=>{ const fs=filasDe(h.id); return fs.length>0&&fs.every(f=>f.estado==="No corresponde"||f.estado==="Ya no aparece"); })());
   const cuenta=hs.filter(h=>!sinError(h));
-  const refs=(g)=>g.map(h=>h.ref+(HALL_ABIERTO(h)?(h.destino==="CLIENTE"?" pendiente del cliente":h.destino==="DEFINIR"?" pendiente de consulta":" pendiente"):"")).join(", ");
-  const marca=(g,base)=>g.some(HALL_ABIERTO)?"⏳":g.length||base==="❌"?"❌":"✅";
+  // Lo corregido sale con tilde verde y «corregido» al lado del número del punto; solo lo abierto lleva ⏳.
+  // (La ❌ de «corregido» generaba dudas: parecía abierto. Matías, 7-nov.)
+  const refs=(g)=>g.map(h=>h.ref+(HALL_ABIERTO(h)?(h.destino==="CLIENTE"?" pendiente del cliente":h.destino==="DEFINIR"?" pendiente de consulta":" pendiente"):" corregido")).join(", ");
+  const marca=(g)=>g.some(HALL_ABIERTO)?"⏳":"✅";
+  const nAb=hs.filter(HALL_ABIERTO).length;
   const L=[`Asunto: ${cli} – Revisión ${per} – HECHA`,"","Hola Dennis,","",
-    `Revisión de ${cli} (${per}) terminada. ✅ = revisado sin problemas · ❌ = corregido (detalle en los puntos) · ⏳ = pendiente.`,"","Checklist"];
-  Object.keys(PASOS_DENNIS).forEach(k=>{ const g=cuenta.filter(h=>h.paso===k), tuvo=hs.some(h=>h.paso===k);
-    L.push(`${marca(g,tuvo?null:base[k])} ${k}. ${PASOS_DENNIS[k]}${CAPTURA[k]?` → 📷 ${CAPTURA[k]}`:""}${g.length?`  (${refs(g)})`:""}`); });
+    nAb?`Revisión de ${cli} (${per}): queda${nAb===1?"":"n"} ${nAb} punto${nAb===1?"":"s"} pendiente${nAb===1?"":"s"} (⏳).`
+       :`Revisión de ${cli} (${per}) terminada: todo corregido, no queda nada pendiente.`,
+    "✅ = revisado y en orden (si dice «corregido», se encontró un error y ya se corrigió) · ⏳ = pendiente.","","Checklist"];
+  Object.keys(PASOS_DENNIS).forEach(k=>{ const g=cuenta.filter(h=>h.paso===k);
+    L.push(`${marca(g)} ${k}. ${PASOS_DENNIS[k]}${CAPTURA[k]?` → 📷 ${CAPTURA[k]}`:""}${g.length?`  (${refs(g)})`:""}`); });
   const otros=cuenta.filter(h=>(h.paso||"otros")==="otros"); if(otros.length) L.push(`${marca(otros)} Otros controles  (${refs(otros)})`);
   const notas=cuenta.flatMap(h=>filasDe(h.id).filter(f=>f.nota&&["Hecho distinto","No corresponde","Corregido"].includes(f.estado))
     .map(f=>({ h, f }))).reduce((acc,{h,f})=>{ const k=`${h.ref}|${f.estado}|${f.nota}`; (acc[k]=acc[k]||{ h, f, n:0 }).n++; return acc; },{});
