@@ -4,11 +4,16 @@
    y una fila por empresa con la última auditoría, el atraso y el estado:
    Pendiente de corregir · Pendiente info cliente (con la fecha de la consulta y el
    seguimiento) · Pendiente confirmación de Dennis · Falta enviar a Dennis ·
-   Lista para cerrar · Cerrada · Sin auditar.
+   Lista para cerrar · Cerrada · Por auditar · Sin auditar.
+   Solo cuenta como auditoría la integral: la que procesó P&L, Balance Sheet y Transaction Detail
+   (columna «integral» de qb_aud_estado_runs). Las revisiones que mandó Dennis en Word no cuentan:
+   la empresa queda «Por auditar» y se muestran sus puntos abiertos (Matías, 7-nov-2026).
+   «Por auditar» = el mes ya está procesado en el tablero de conciliaciones (todas las cuentas
+   Reconciliado/Inactive) y ninguna auditoría integral lo cubre.
    Los datos salen de los expedientes (aud_resumen + aud_estado), que piden el PIN de expedientes.
    El seguimiento al cliente se guarda como nota del expediente («Seguimiento al cliente: …»).
    La agenda vieja (frecuencia y tildes por mes) sigue en la solapa «Agenda». */
-const AP = { sub:"todas", prio:"", est:"", orden:"atraso", datos:null, cargando:false, err:"", det:{}, cargandoDet:false };
+const AP = { sub:"todas", prio:[], est:[], bk:[], orden:"atraso", dir:1, datos:null, cargando:false, err:"", det:{}, cargandoDet:false, proc:null, msOpen:"" };
 const AP_EST = {
   "Pendiente de corregir":           { c:"var(--amber)",  d:"Quedan filas o puntos por corregir en la Revisión" },
   "Pendiente info cliente":          { c:"var(--blue)",   d:"Hay puntos que solo puede contestar el cliente" },
@@ -16,12 +21,13 @@ const AP_EST = {
   "Falta enviar a Dennis":           { c:"var(--pink)",   d:"El equipo terminó: falta mandarle la respuesta HECHA a Dennis" },
   "Lista para cerrar":               { c:"var(--cyan)",   d:"No queda nada abierto y ya se le mandó a Dennis: se puede cerrar" },
   "Cerrada":                         { c:"var(--menta)",  d:"Auditoría cerrada" },
-  "Sin auditar":                     { c:"var(--muted2)", d:"Nunca se auditó" },
+  "Por auditar":                     { c:"var(--red)",    d:"El mes ya está procesado en el tablero y falta la auditoría integral (P&L, Balance Sheet y Transaction Detail)" },
+  "Sin auditar":                     { c:"var(--muted2)", d:"Nunca se hizo una auditoría integral y todavía no hay un mes procesado completo" },
 };
 const AP_ORDEN_EST = Object.keys(AP_EST);
 const AP_SUBS = [["todas","Todas"],["aud","Auditadas"],["Cerrada","Cerradas"],["Pendiente de corregir","Pendientes de corregir"],
   ["Pendiente info cliente","Pendiente info cliente"],["Pendiente confirmación de Dennis","Pendiente confirmación de Dennis"],
-  ["Falta enviar a Dennis","Falta enviar a Dennis"],["Lista para cerrar","Lista para cerrar"],["sin","Sin auditar"],["atras","Atrasadas"],
+  ["Falta enviar a Dennis","Falta enviar a Dennis"],["Lista para cerrar","Lista para cerrar"],["Por auditar","Por auditar"],["sin","Sin auditoría integral"],["atras","Atrasadas"],
   ["bk","Por bookkeeper"],["mes","Mes a mes"],["agenda","Agenda"]];
 const AP_SEG = "Seguimiento al cliente: ";
 
@@ -40,9 +46,26 @@ async function apCargar(force){
   try{
     const [r,e]=await Promise.all([aapi("aud_resumen"),aapi("aud_estado")]);
     AP.datos={ runs:r.runs||[], avance:r.avance||[], est:e.runs||[], abiertos:e.abiertos||[] }; AP.t=Date.now();
+    if(!AP.proc) AP.proc=await apProcesados();
   }catch(ex){ AP.err=ex.message; if(/PIN/i.test(ex.message)){ sessionStorage.removeItem("qb_pin_aud"); A.pin=""; } }
   AP.cargando=false;
   if(S.view==="auditorias") renderView();
+}
+// Último mes procesado por empresa en el tablero de conciliaciones: todas sus cuentas Reconciliado o
+// Inactive (y al menos una Reconciliado). Lee cada mes con el PIN general (bootstrap); el mes que ya
+// está en pantalla no se vuelve a pedir.
+async function apProcesados(){
+  const out=new Map();
+  try{
+    const ps=(S.periodos||[]).slice().sort((a,b)=>String(b.etiqueta).localeCompare(String(a.etiqueta))).slice(0,6);
+    const filasDe=await Promise.all(ps.map(p=>p.id===S.periodo_id?Promise.resolve(S.filas):api("bootstrap",{ periodo_id:p.id }).then(d=>d.filas||[])));
+    ps.forEach((p,i)=>{
+      const g=new Map(); filasDe[i].forEach(f=>{ const o=g.get(f.cliente_id)||{ ok:true, rec:false }; if(f.estado==="Reconciliado") o.rec=true; else if(f.estado!=="Inactive") o.ok=false; g.set(f.cliente_id,o); });
+      const mes=String(p.etiqueta).slice(0,7);
+      g.forEach((o,cid)=>{ if(o.ok&&o.rec&&!(out.get(cid)>=mes)) out.set(cid,mes); });
+    });
+  }catch(ex){ console.warn("No se pudieron leer los meses procesados",ex); }
+  return out;
 }
 // Detalle (quién pidió y seguimientos) de las empresas que esperan al cliente o a Dennis: un aud_cliente por empresa.
 async function apCargarDet(cids){
@@ -79,10 +102,13 @@ function apFilas(){
   const ab=new Map(); D.abiertos.forEach(h=>{ (ab.get(h.run_id)||ab.set(h.run_id,[]).get(h.run_id)).push(h); });
   const runsDe=new Map(); D.runs.forEach(r=>{ (runsDe.get(r.cliente_id)||runsDe.set(r.cliente_id,[]).get(r.cliente_id)).push(r); });
   return S.clientes.filter(c=>c.activo!==false).map(c=>{
-    const rs=(runsDe.get(c.id)||[]).slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))||b.id-a.id);
+    const todos=(runsDe.get(c.id)||[]).slice().sort((a,b)=>String(b.fecha).localeCompare(String(a.fecha))||b.id-a.id);
+    const rs=todos.filter(r=>es.get(r.id)?.integral), dn=todos.filter(r=>!es.get(r.id)?.integral);
     const run=rs[0]||null, p=PRIOS.includes(c.prioridad)?c.prioridad:"Media";
-    const base={ c, run, runs:rs, prio:p, bk:c.bookkeeper_default||"(sin asignar)", cli:[], den:[], corr:[] };
-    if(!run) return { ...base, estados:["Sin auditar"], estado:"Sin auditar", atraso:null, hasta:"" };
+    const proc=AP.proc?.get(c.id)||"";
+    const denAb=dn.reduce((n,r)=>n+(ab.get(r.id)||[]).length,0);
+    const base={ c, run, runs:rs, dn, denAb, proc, prio:p, bk:c.bookkeeper_default||"(sin asignar)", cli:[], den:[], corr:[], terminada:null, abiertos:0, filas:0, hechas:0 };
+    if(!run){ const e0=proc?"Por auditar":"Sin auditar"; return { ...base, estados:[e0], estado:e0, atraso:null, hasta:"" }; }
     const hasta=rs.reduce((m,r)=>apMes(r.periodo_hasta)>m?apMes(r.periodo_hasta):m,"");
     const atraso=Math.max(0, mesIdx(obj)-mesIdx(hasta||apMes(run.fecha)));
     const hs=ab.get(run.id)||[], a=av.get(run.id)||{}, e=es.get(run.id)||{};
@@ -99,8 +125,11 @@ function apFilas(){
       if(!corr.length&&!enviada) L.push("Falta enviar a Dennis");
       if(!L.length) L.push("Lista para cerrar");
     }
+    if(proc&&proc>hasta) L.push("Por auditar");
     const pedidos=cli.map(h=>h.pedido_breana_at).filter(Boolean).sort();
+    const ult=e.ultimo_tilde||a.ultimo_tilde||null;
     return { ...base, cli, den, corr, estados:L, estado:L[0], atraso, hasta,
+      terminada:hs.length?null:(ult||run.fecha),
       consultado:pedidos[0]||null, sinPedir:cli.filter(h=>!h.pedido_breana_at).length,
       filas:Number(e.filas||a.filas||0), hechas:Number(e.hechas||0), abiertos:hs.length, quien:e.quien||"", ultimo:e.ultimo_tilde||a.ultimo_tilde||null };
   });
@@ -109,20 +138,35 @@ function apFiltrar(rows){
   let r=rows;
   if(S.fbk) r=r.filter(x=>x.c.bookkeeper_default===S.fbk);
   if(S.q){ const q=S.q.toLowerCase(); r=r.filter(x=>(x.c.nombre||"").toLowerCase().includes(q)); }
-  if(AP.prio) r=r.filter(x=>x.prio===AP.prio);
-  if(AP.est) r=r.filter(x=>x.estados.includes(AP.est));
+  if(AP.prio.length) r=r.filter(x=>AP.prio.includes(x.prio));
+  if(AP.bk.length) r=r.filter(x=>AP.bk.includes(x.bk));
+  if(AP.est.length) r=r.filter(x=>x.estados.some(e=>AP.est.includes(e)));
   return r;
 }
 const apEnSub=(x,s)=>["todas","bk","mes"].includes(s)?true:s==="aud"?!!x.run:s==="sin"?!x.run:s==="atras"?(!!x.run&&x.atraso>0):x.estados.includes(s);
 function apOrdenar(r){
+  const nm=(a,b)=>a.c.nombre.localeCompare(b.c.nombre), pctOf=(x)=>x.filas?x.hechas/x.filas:-1;
   const by={ atraso:(a,b)=>(b.atraso??99)-(a.atraso??99)||PRIO_RANK[a.prio]-PRIO_RANK[b.prio]||a.c.nombre.localeCompare(b.c.nombre),
+    periodo:(a,b)=>String(a.hasta||"").localeCompare(String(b.hasta||""))||nm(a,b),
+    procesado:(a,b)=>String(b.proc||"").localeCompare(String(a.proc||""))||nm(a,b),
+    avance:(a,b)=>pctOf(a)-pctOf(b)||nm(a,b),
+    abiertos:(a,b)=>(b.abiertos||0)-(a.abiertos||0)||nm(a,b),
+    terminada:(a,b)=>String(b.terminada||"").localeCompare(String(a.terminada||""))||nm(a,b),
     empresa:(a,b)=>a.c.nombre.localeCompare(b.c.nombre),
     ultima:(a,b)=>String(a.run?.fecha||"").localeCompare(String(b.run?.fecha||""))||a.c.nombre.localeCompare(b.c.nombre),
     estado:(a,b)=>AP_ORDEN_EST.indexOf(a.estado)-AP_ORDEN_EST.indexOf(b.estado)||a.c.nombre.localeCompare(b.c.nombre),
     consulta:(a,b)=>String(a.consultado||"9999").localeCompare(String(b.consultado||"9999"))||a.c.nombre.localeCompare(b.c.nombre),
     bk:(a,b)=>a.bk.localeCompare(b.bk)||a.c.nombre.localeCompare(b.c.nombre),
     prio:(a,b)=>PRIO_RANK[a.prio]-PRIO_RANK[b.prio]||a.c.nombre.localeCompare(b.c.nombre) };
-  return r.slice().sort(by[AP.orden]||by.atraso);
+  const f=by[AP.orden]||by.atraso;
+  return r.slice().sort((a,b)=>AP.dir*f(a,b));
+}
+/* Desplegable con casillas: se puede elegir más de una opción. */
+function apMulti(k,label,opts){
+  const sel=AP[k];
+  return `<details class="ap-ms" data-k="${k}"${AP.msOpen===k?" open":""}><summary class="btn ghost sm">${label}${sel.length?` <b>(${sel.length})</b>`:": todos"} ▾</summary>
+    <div class="ap-ms-pop">${opts.map(o=>`<label><input type="checkbox" data-ap-ms="${k}" value="${esc(o)}" ${sel.includes(o)?"checked":""}> ${esc(o)}</label>`).join("")}
+    ${sel.length?`<a href="#" data-ap-ms-solo="${k}">Todos</a>`:""}</div></details>`;
 }
 const apChip=(e,small,extra)=>`<span class="ap-chip${small?" sm":""}" style="--c:${AP_EST[e].c}" title="${esc(AP_EST[e].d)}">${esc(e)}${extra?` <i>${extra}</i>`:""}</span>`;
 function apConsulta(x){
@@ -140,23 +184,25 @@ function apAtraso(x){
 
 function apTabla(rows){
   if(!rows.length) return `<div class="empty">Nada para este filtro.</div>`;
-  return `<table class="emp-table ap-table"><thead><tr>
-    <th>Empresa</th><th>Bookkeeper</th><th>Prioridad</th><th>Última auditoría</th><th>Período auditado</th><th>Atraso</th><th>Estado</th><th class="r">Avance</th><th class="r">Abiertos</th><th>Corrigió</th><th></th></tr></thead><tbody>
+  const th=(k,t,cls)=>`<th class="ap-sort${cls?" "+cls:""}${AP.orden===k?" on":""}" data-ap-sort="${k}" title="Ordenar por esta columna (otro clic invierte)">${t}${AP.orden===k?(AP.dir>0?" ▲":" ▼"):""}</th>`;
+  return `<div class="ax-scroll"><table class="emp-table ap-table"><thead><tr>
+    ${th("empresa","Empresa")}${th("bk","Bookkeeper")}${th("prio","Prioridad")}${th("procesado","Procesado hasta")}${th("ultima","Última auditoría")}${th("periodo","Período auditado")}${th("atraso","Atraso")}${th("estado","Estado")}${th("avance","Avance","r")}${th("abiertos","Abiertos","r")}${th("terminada","Terminada")}<th></th></tr></thead><tbody>
     ${rows.map(x=>{ const pct=x.filas?Math.round(x.hechas*100/x.filas):null;
       return `<tr>
       <td data-label="Empresa"><a href="#" class="aud-open" data-cid="${x.c.id}" title="Abrir el expediente">${esc(x.c.nombre)}</a></td>
       <td data-label="Bookkeeper">${esc(x.c.bookkeeper_default||"—")}</td>
       <td data-label="Prioridad"><span class="prio-badge prio-${prioSlug(x.prio)}">${esc(x.prio)}</span></td>
-      <td data-label="Última auditoría">${x.run?`${apFecha(x.run.fecha)} <span class="muted">· ${esc(x.run.estado||"")}</span>`:"—"}</td>
+      <td data-label="Procesado hasta">${x.proc?esc(mesLabel(x.proc)):'<span class="muted">—</span>'}</td>
+      <td data-label="Última auditoría">${x.run?`${apFecha(x.run.fecha)} <span class="muted">· ${esc(x.run.estado||"")}</span>`:"—"}${x.dn.length?`<div class="muted ap-dn" title="Revisión que mandó Dennis en Word: no es una auditoría integral">Revisión de Dennis ${apFecha(x.dn[0].fecha)}${x.denAb?` · ${x.denAb} punto${x.denAb===1?"":"s"} abierto${x.denAb===1?"":"s"}`:""}</div>`:""}</td>
       <td data-label="Período">${x.run?`${apFecha(x.run.periodo_desde)} – ${apFecha(x.run.periodo_hasta)}`:"—"}</td>
       <td data-label="Atraso">${apAtraso(x)}</td>
       <td data-label="Estado" class="ap-ests">${apEstadosHtml(x)}</td>
       <td data-label="Avance" class="r">${pct==null?"—":`<span class="mini-prog"><i style="width:${pct}%"></i></span>${x.hechas}/${x.filas}`}</td>
       <td data-label="Abiertos" class="r">${x.run?(x.abiertos||"—"):""}</td>
-      <td data-label="Corrigió">${esc(x.quien||"—")}${x.ultimo?` <span class="muted">· ${apFecha(x.ultimo)}</span>`:""}</td>
+      <td data-label="Terminada">${x.terminada?`<span class="ap-ok">✓ ${apFecha(x.terminada)}</span>`:x.run?'<span class="muted">en curso</span>':"—"}</td>
       <td>${x.estado==="Lista para cerrar"?`<button class="btn primary sm" data-ap-cerrar="${x.run.id}">Cerrar auditoría</button>`
         :x.estado==="Falta enviar a Dennis"?`<button class="btn ghost sm" data-ap-enviada="${x.run.id}" title="Marcar que ya se le mandó la respuesta HECHA">Enviada a Dennis</button>`:""}</td></tr>`; }).join("")}
-    </tbody></table>`;
+    </tbody></table></div>`;
 }
 
 /* Pendiente info cliente / confirmación de Dennis: una tarjeta por empresa con sus puntos y el seguimiento. */
@@ -189,9 +235,6 @@ function apEspera(rows, tipo){
 
 function apPorBookkeeper(rows){
   const g=new Map(); rows.forEach(x=>{ (g.get(x.bk)||g.set(x.bk,[]).get(x.bk)).push(x); });
-  const equipo=new Map();
-  rows.forEach(x=>String(x.quien||"").split(",").map(s=>s.trim()).filter(Boolean).forEach(q=>{
-    const o=equipo.get(q)||{ emp:new Set(), ult:"" }; o.emp.add(x.c.nombre); if(x.ultimo&&x.ultimo>o.ult) o.ult=x.ultimo; equipo.set(q,o); }));
   const cards=[...g.entries()].sort((a,b)=>b[1].length-a[1].length).map(([bk,xs],i)=>{
     const col=BK_COLORS[i%BK_COLORS.length], aldia=xs.filter(x=>x.run&&!x.atraso).length, pct=Math.round(aldia*100/xs.length);
     const cnt=(e)=>xs.filter(x=>x.estados.includes(e)).length;
@@ -204,12 +247,7 @@ function apPorBookkeeper(rows){
       ${AP_ORDEN_EST.map(e=>`<div class="bk-stat"><span>${e}</span><b style="color:${AP_EST[e].c}">${cnt(e)||"—"}</b></div>`).join("")}
       <div class="bk-cli-head">Empresas</div>
       <div class="bk-clientes">${apOrdenar(xs).map(x=>`<div class="bk-cli ${x.estado==="Cerrada"?"done":""}"><a href="#" class="aud-open nm" data-cid="${x.c.id}">${esc(x.c.nombre)}</a><span class="st">${apChip(x.estado,true)}</span></div>`).join("")}</div></div>`; }).join("");
-  const eq=[...equipo.entries()].sort((a,b)=>b[1].emp.size-a[1].emp.size);
-  return `<h3 class="ap-h">Por bookkeeper de QuickBooks</h3><div class="bk-panel">${cards}</div>
-    <div class="chart-card wide"><h3>Quién corrigió en la Revisión <span class="muted">· según los tildes de cada auditoría</span></h3>
-    ${eq.length?`<table class="emp-table ap-table"><thead><tr><th>Persona</th><th class="r">Empresas</th><th>Último tilde</th><th>Empresas</th></tr></thead><tbody>
-      ${eq.map(([q,o])=>`<tr><td><b>${esc(q)}</b></td><td class="r">${o.emp.size}</td><td>${apFecha(o.ult)}</td><td class="muted" style="white-space:normal">${esc([...o.emp].sort().join(", "))}</td></tr>`).join("")}</tbody></table>`
-      :`<p class="muted">Todavía nadie tildó correcciones.</p>`}</div>`;
+  return `<h3 class="ap-h">Por bookkeeper de QuickBooks</h3><div class="bk-panel">${cards}</div>`;
 }
 
 function apMesAMes(rows){
@@ -246,7 +284,7 @@ function renderAuditorias(){
     [cnt("Pendiente de corregir"),"Pendientes de corregir",AP_EST["Pendiente de corregir"].c,"Pendiente de corregir"],
     [cnt("Pendiente info cliente"),"Pendiente info cliente",AP_EST["Pendiente info cliente"].c,"Pendiente info cliente"],
     [cnt("Pendiente confirmación de Dennis"),"Pendiente confirmación de Dennis",AP_EST["Pendiente confirmación de Dennis"].c,"Pendiente confirmación de Dennis"],
-    [todas.filter(x=>!x.run).length,"Sin auditar","var(--red)","sin"],[todas.filter(x=>x.run&&x.atraso).length,"Atrasadas","var(--amber)","atras"]];
+    [cnt("Por auditar"),"Por auditar",AP_EST["Por auditar"].c,"Por auditar"],[todas.filter(x=>!x.run).length,"Sin auditoría integral","var(--muted2)","sin"],[todas.filter(x=>x.run&&x.atraso).length,"Atrasadas","var(--amber)","atras"]];
   const rows=apOrdenar(todas.filter(x=>apEnSub(x,AP.sub)));
   const cuerpo=AP.sub==="bk"?apPorBookkeeper(todas):AP.sub==="mes"?apMesAMes(apOrdenar(todas))
     :AP.sub==="Pendiente info cliente"?apEspera(rows,"cliente"):AP.sub==="Pendiente confirmación de Dennis"?apEspera(rows,"dennis")
@@ -255,9 +293,10 @@ function renderAuditorias(){
     <div class="ap-kpis">${K.map(k=>`<div class="kpi${k[4]!=null?" kpi-prog":""}${AP.sub===k[3]&&k[4]==null?" ap-on":""}" data-ap-sub="${k[3]}"><div class="n" style="color:${k[2]}">${k[0]}</div><div class="l">${k[1]}</div>${k[4]!=null?`<div class="prog-track"><div class="prog-fill" style="width:${k[4]}%"></div></div>`:""}</div>`).join("")}</div>
     ${nav}
     <div class="ap-filtros">
-      <select id="ap-prio"><option value="">Todas las prioridades</option>${PRIOS.map(p=>`<option ${AP.prio===p?"selected":""}>${p}</option>`).join("")}</select>
-      <select id="ap-est"><option value="">Todos los estados</option>${AP_ORDEN_EST.map(e=>`<option ${AP.est===e?"selected":""}>${e}</option>`).join("")}</select>
-      <label class="muted">Ordenar <select id="ap-orden">${[["atraso","Más atrasadas primero"],["consulta","Consulta al cliente más vieja"],["ultima","Última auditoría (más vieja)"],["estado","Estado"],["prio","Prioridad"],["bk","Bookkeeper"],["empresa","Empresa"]].map(o=>`<option value="${o[0]}" ${AP.orden===o[0]?"selected":""}>${o[1]}</option>`).join("")}</select></label>
+      ${apMulti("est","Estado",AP_ORDEN_EST)}${apMulti("prio","Prioridad",PRIOS)}${apMulti("bk","Bookkeeper",[...new Set(apFilas().map(x=>x.bk))].sort())}
+      ${AP.est.length||AP.prio.length||AP.bk.length?'<button class="btn ghost sm" id="ap-ms-clear">Quitar filtros</button>':""}
+      <label class="muted">Ordenar <select id="ap-orden">${[["atraso","Más atrasadas primero"],["procesado","Procesado hasta (más nuevo)"],["consulta","Consulta al cliente más vieja"],["ultima","Última auditoría (más vieja)"],["periodo","Período auditado"],["estado","Estado"],["avance","Avance"],["abiertos","Más puntos abiertos"],["terminada","Terminada (más nueva)"],["prio","Prioridad"],["bk","Bookkeeper"],["empresa","Empresa"]].map(o=>`<option value="${o[0]}" ${AP.orden===o[0]?"selected":""}>${o[1]}</option>`).join("")}</select></label>
+      <button class="btn ghost sm" id="ap-dir" title="Invertir el orden">${AP.dir>0?"▲":"▼"}</button>
       <span class="muted">${S.fbk?`Bookkeeper: <b>${esc(S.fbk)}</b> · `:""}${todas.length} empresas · objetivo: auditadas hasta ${mesLabel(obj)}</span>
       <span class="ap-acts"><button class="btn ghost sm" id="ap-csv">Exportar CSV</button><button class="btn ghost sm" id="ap-refresh" title="Volver a leer los expedientes">↻</button><button class="btn ghost sm" id="audit-exp">📁 Expedientes</button></span>
     </div>
@@ -287,9 +326,14 @@ function apBind(todas){
   $("#ap-login")?.addEventListener("click",apLogin);
   $("#ap-retry")?.addEventListener("click",()=>{ AP.err=""; apCargar(true); });
   $("#ap-refresh")?.addEventListener("click",()=>{ AP.datos=null; AP.det={}; apCargar(true); renderView(); });
-  $("#ap-prio")?.addEventListener("change",e=>{ AP.prio=e.target.value; renderView(); });
-  $("#ap-est")?.addEventListener("change",e=>{ AP.est=e.target.value; renderView(); });
-  $("#ap-orden")?.addEventListener("change",e=>{ AP.orden=e.target.value; renderView(); });
+  $$("[data-ap-ms]").forEach(cb=>cb.addEventListener("change",()=>{ const k=cb.dataset.apMs, v=cb.value;
+    AP[k]=cb.checked?[...AP[k],v]:AP[k].filter(x=>x!==v); AP.msOpen=k; renderView(); }));
+  $$("details.ap-ms").forEach(d=>d.addEventListener("toggle",()=>{ if(d.open){ AP.msOpen=d.dataset.k; $$("details.ap-ms").forEach(o=>{ if(o!==d) o.open=false; }); } else if(AP.msOpen===d.dataset.k) AP.msOpen=""; }));
+  $$("[data-ap-ms-solo]").forEach(b=>b.addEventListener("click",e=>{ e.preventDefault(); AP[b.dataset.apMsSolo]=[]; AP.msOpen=b.dataset.apMsSolo; renderView(); }));
+  $("#ap-ms-clear")?.addEventListener("click",()=>{ AP.est=[]; AP.prio=[]; AP.bk=[]; AP.msOpen=""; renderView(); });
+  $("#ap-orden")?.addEventListener("change",e=>{ AP.orden=e.target.value; AP.dir=1; renderView(); });
+  $("#ap-dir")?.addEventListener("click",()=>{ AP.dir=-AP.dir; renderView(); });
+  $$("[data-ap-sort]").forEach(t=>t.addEventListener("click",()=>{ const k=t.dataset.apSort; if(AP.orden===k) AP.dir=-AP.dir; else { AP.orden=k; AP.dir=1; } renderView(); }));
   $$("[data-ap-cerrar]").forEach(b=>b.addEventListener("click",()=>apRun(+b.dataset.apCerrar,{ estado:"Cerrada" },"Auditoría cerrada ✓")));
   $$("[data-ap-enviada]").forEach(b=>b.addEventListener("click",()=>apRun(+b.dataset.apEnviada,{ estado:"Enviada a Dennis" },"Marcada como enviada a Dennis ✓")));
   $$("[data-ap-seg]").forEach(b=>b.addEventListener("click",()=>apSeguimiento(+b.dataset.apSeg,+b.dataset.run)));
@@ -299,8 +343,8 @@ function apBind(todas){
     try{ await aapi("aud_pedido_breana",{ run_id:+b.dataset.apPedir, marcar:true, quien:yo.trim() }); toast("Marcado como consultado hoy ✓"); const r=AP.datos.runs.find(x=>x.id===+b.dataset.apPedir); if(r) delete AP.det[r.cliente_id]; await apCargar(true); }catch(ex){ toast(ex.message,true); } }));
   $("#ap-csv")?.addEventListener("click",()=>{
     const q=(v)=>`"${String(v??"").replace(/"/g,'""')}"`;
-    const L=[["Empresa","Bookkeeper","Prioridad","Ultima auditoria","Desde","Hasta","Estado auditoria","Atraso (meses)","Situacion","Consultado al cliente","Puntos cliente","Puntos Dennis","Filas hechas","Filas","Puntos abiertos","Corrigio"].map(q).join(",")]
-      .concat(apOrdenar(todas||[]).map(x=>[x.c.nombre,x.c.bookkeeper_default,x.prio,x.run?.fecha,x.run?.periodo_desde,x.run?.periodo_hasta,x.run?.estado,x.run?x.atraso:"Nunca",x.estados.join(" + "),x.consultado?String(x.consultado).slice(0,10):"",x.cli.length,x.den.length,x.hechas,x.filas,x.abiertos,x.quien].map(q).join(",")));
+    const L=[["Empresa","Bookkeeper","Prioridad","Ultima auditoria","Desde","Hasta","Estado auditoria","Atraso (meses)","Situacion","Consultado al cliente","Puntos cliente","Puntos Dennis","Filas hechas","Filas","Puntos abiertos","Terminada","Procesado hasta","Revision Dennis (Word)","Puntos abiertos de Dennis"].map(q).join(",")]
+      .concat(apOrdenar(todas||[]).map(x=>[x.c.nombre,x.c.bookkeeper_default,x.prio,x.run?.fecha,x.run?.periodo_desde,x.run?.periodo_hasta,x.run?.estado,x.run?x.atraso:"Nunca",x.estados.join(" + "),x.consultado?String(x.consultado).slice(0,10):"",x.cli.length,x.den.length,x.hechas,x.filas,x.abiertos,x.terminada?String(x.terminada).slice(0,10):"",x.proc,x.dn[0]?.fecha||"",x.denAb].map(q).join(",")));
     const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob(["﻿"+L.join("\r\n")],{ type:"text/csv" })); a.download=`auditorias_${mesActual()}.csv`; a.click();
   });
 }
