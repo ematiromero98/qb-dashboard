@@ -494,6 +494,7 @@ function fotoFila(id){
 }
 
 /* ---- Mail al cliente: se ve como va a salir, con la foto de QuickBooks y la del extracto ---- */
+const GL_MISC="Your Miscellaneous account in QuickBooks (General Ledger)";
 const MES_EN=["January","February","March","April","May","June","July","August","September","October","November","December"];
 /* Va al mail el punto con destino CLIENTE y cualquier otro que tenga pedido escrito (botón «Pedir al cliente» de la Revisión). */
 const pideCliente = (h)=>h.codigo==="A01"?h.destino==="CLIENTE":h.destino==="CLIENTE"||!!String(h.mail_texto||"").trim();
@@ -515,7 +516,10 @@ async function elegirFalta(hid,destino){
 }
 const puntosMail = (run)=>puntosDe(run.id).filter(h=>pideCliente(h)&&HALL_ABIERTO(h));
 const fotoMail = (h,t)=>fotosDe(x=>x.hallazgo_id===h.id&&x.tipo===t);
-function faltanMail(run){ return puntosMail(run).filter(h=>!String(h.mail_texto||"").trim()||!fotoMail(h,"QuickBooks").length||!fotoMail(h,"Extracto").length); }
+/* Al cliente va la foto del extracto bancario, arriba. QuickBooks solo cuando el punto es de Miscellaneous: ahí va el GL
+   entero de esa cuenta (Matías, 10-nov-2026). Las demás fotos de QuickBooks quedan en el expediente para el equipo. */
+const esMisc = (h)=>/miscel|\bmisc\b/i.test(h.titulo||"")||filasDe(h.id).some(f=>/miscel|\bmisc\b/i.test(f.de||""));
+function faltanMail(run){ return puntosMail(run).filter(h=>!String(h.mail_texto||"").trim()||!fotoMail(h,"Extracto").length||(esMisc(h)&&!fotoMail(h,"QuickBooks").length)); }
 function periodoEn(r){ const d=String(r.periodo_desde||""), h=String(r.periodo_hasta||""); if(!h) return "";
   const a=+d.slice(5,7), b=+h.slice(5,7); return `${d&&a!==b?MES_EN[a-1]+"–":""}${MES_EN[b-1]} ${h.slice(0,4)}`; }
 function hastaEn(r){ const h=String(r.periodo_hasta||""); return h?`${MES_EN[+h.slice(5,7)-1]} ${+h.slice(8,10)}, ${h.slice(0,4)}`:""; }
@@ -523,9 +527,9 @@ const filasMail = (h)=>filasDe(h.id).filter(f=>f.estado!=="Ya no aparece");
 function mailDatos(run){
   const cli=cliDe(A.cid).nombre, per=periodoEn(run), hasta=hastaEn(run);
   return { asunto:`${cli} — Items needed${per?` for ${per}`:""}`,
-    intro:`We are reviewing your books${hasta?` through ${hasta}`:""} and need your help with the items below. For each one we include how it looks in your books and in your bank statement. Please reply at your earliest convenience.`,
+    intro:`We are reviewing your books${hasta?` through ${hasta}`:""} and need your help with the items below. For each one we include the image from your bank statement. Please reply at your earliest convenience.`,
     cierre:"Please reply to this email with the information.", firma:["Thanks,"],
-    items:puntosMail(run).map((h,i)=>({ n:i+1, h, texto:String(h.mail_texto||"").trim(), filas:filasMail(h), qb:fotoMail(h,"QuickBooks"), ext:fotoMail(h,"Extracto") })) };
+    items:puntosMail(run).map((h,i)=>({ n:i+1, h, texto:String(h.mail_texto||"").trim(), filas:filasMail(h), qb:esMisc(h)?fotoMail(h,"QuickBooks"):[], misc:esMisc(h), ext:fotoMail(h,"Extracto") })) };
 }
 function tabMail(root){
   const run=runSel(); if(!run){ root.innerHTML=`<div class="empty">Todavía no hay auditorías de este cliente.</div>`; return; }
@@ -547,7 +551,7 @@ function tabMail(root){
         <div class="ml-ref" title="Solo lo ves vos, no sale en el mail">Punto ${esc(it.h.ref)} · ${esc(it.h.titulo)}</div>
         <div class="ml-texto"><b>${it.n}.</b> <textarea rows="2" data-mt="${it.h.id}" placeholder="Write the request in English. Example: Please let us know what this payment is for.">${esc(it.texto)}</textarea></div>
         ${it.filas.length?`<table class="ml-tabla"><thead><tr><th>Date</th><th>Description</th><th class="r">Amount</th><th>Your answer</th></tr></thead><tbody>${it.filas.map(f=>`<tr><td>${esc(f.fecha||"")}</td><td>${esc([f.num,f.payee].filter(Boolean).join(" · "))}</td><td class="r">${money2(f.monto)}</td><td></td></tr>`).join("")}</tbody></table>`:""}
-        <div class="ml-slots">${slot(it,"QuickBooks","In your books (QuickBooks)")}${slot(it,"Extracto","In your bank statement")}</div>
+        <div class="ml-slots">${slot(it,"Extracto","In your bank statement")}${it.misc?slot(it,"QuickBooks",GL_MISC):""}</div>
       </div>`).join("")}
       <p>${esc(M.cierre)}</p><p class="ml-firma">${M.firma.map(esc).join("<br>")}</p>
     </div>
@@ -600,7 +604,7 @@ function mailHtml(m, src){
   return `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#000"><p>Hi,</p><p>${esc(m.intro)}</p>`+
     m.items.map(it=>`<p style="margin-top:18px"><b>${it.n}.</b> ${esc(it.texto).replace(/\n/g,"<br>")}</p>
       ${it.filas.length?`<table style="border-collapse:collapse;font-size:10pt"><tr><th ${th}>Date</th><th ${th}>Description</th><th ${th}>Amount</th><th ${th}>Your answer</th></tr>${it.filas.map(f=>`<tr><td ${td}>${esc(f.fecha||"")}</td><td ${td}>${esc([f.num,f.payee].filter(Boolean).join(" · "))}</td><td ${td} align="right">${money2(f.monto)}</td><td ${td}>&nbsp;</td></tr>`).join("")}</table>`:""}
-      ${fotos("In your books (QuickBooks)",it.qb)}${fotos("In your bank statement",it.ext)}`).join("")+
+      ${fotos("In your bank statement",it.ext)}${fotos(GL_MISC,it.qb)}`).join("")+
     `<p style="margin-top:18px">${esc(m.cierre)}</p><p>${m.firma.map(esc).join("<br>")}</p></div>`;
 }
 function mailTxt(m){
