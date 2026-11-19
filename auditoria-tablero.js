@@ -3,7 +3,7 @@
    Como Procesamiento, pero para auditorías: tarjetas, solapas con conteo, filtros
    y una fila por empresa con la última auditoría, el atraso y el estado:
    Pendiente de corregir · Pendiente info cliente (con la fecha de la consulta y el
-   seguimiento) · Pendiente confirmación de Dennis · Falta enviar a Dennis ·
+   seguimiento) · Pendiente confirmación de Dennis ·
    Lista para cerrar · Cerrada · Por auditar · Sin auditar.
    Solo cuenta como auditoría la integral: la que procesó P&L, Balance Sheet y Transaction Detail
    (columna «integral» de qb_aud_estado_runs). Las revisiones que mandó Dennis en Word no cuentan:
@@ -18,8 +18,7 @@ const AP_EST = {
   "Pendiente de corregir":           { c:"var(--amber)",  d:"Quedan filas o puntos por corregir en la Revisión" },
   "Pendiente info cliente":          { c:"var(--blue)",   d:"Hay puntos que solo puede contestar el cliente" },
   "Pendiente confirmación de Dennis":{ c:"var(--violet)", d:"Hay puntos marcados «Consultar con Dennis»" },
-  "Falta enviar a Dennis":           { c:"var(--pink)",   d:"El equipo terminó: falta mandarle la respuesta HECHA a Dennis" },
-  "Lista para cerrar":               { c:"var(--cyan)",   d:"No queda nada abierto y ya se le mandó a Dennis: se puede cerrar" },
+  "Lista para cerrar":               { c:"var(--cyan)",   d:"No queda nada abierto: se puede cerrar" },
   "Cerrada":                         { c:"var(--menta)",  d:"Auditoría cerrada" },
   "Por auditar":                     { c:"var(--red)",    d:"El mes ya está procesado en el tablero y falta la auditoría integral (P&L, Balance Sheet y Transaction Detail)" },
   "Sin auditar":                     { c:"var(--muted2)", d:"Nunca se hizo una auditoría integral y todavía no hay un mes procesado completo" },
@@ -27,7 +26,7 @@ const AP_EST = {
 const AP_ORDEN_EST = Object.keys(AP_EST);
 const AP_SUBS = [["todas","Todas"],["aud","Auditadas"],["Cerrada","Cerradas"],["Pendiente de corregir","Pendientes de corregir"],
   ["Pendiente info cliente","Pendiente info cliente"],["Pendiente confirmación de Dennis","Pendiente confirmación de Dennis"],
-  ["Falta enviar a Dennis","Falta enviar a Dennis"],["Lista para cerrar","Lista para cerrar"],["Por auditar","Por auditar"],["sin","Sin auditoría integral"],["atras","Atrasadas"],
+  ["Lista para cerrar","Lista para cerrar"],["Por auditar","Por auditar"],["sin","Sin auditoría integral"],["atras","Atrasadas"],
   ["bk","Por bookkeeper"],["mes","Mes a mes"],["agenda","Agenda"]];
 const AP_SEG = "Seguimiento al cliente: ";
 
@@ -115,14 +114,13 @@ function apFilas(){
     const cli=hs.filter(apEsCliente);
     const den=hs.filter(h=>h.destino==="DEFINIR");
     const corr=hs.filter(h=>!["CLIENTE","DEFINIR","DEFINIDO","CONTROL","CIERRE ANUAL"].includes(h.destino)&&(h.pendientes>0||!h.filas));
-    const enviada=run.estado==="Enviada a Dennis", cerrada=["Hecho","Cerrada"].includes(run.estado);
+    const cerrada=["Hecho","Cerrada"].includes(run.estado);
     const L=[];
     if(cerrada) L.push("Cerrada");
     else{
       if(corr.length) L.push("Pendiente de corregir");
       if(cli.length) L.push("Pendiente info cliente");
       if(den.length) L.push("Pendiente confirmación de Dennis");
-      if(!corr.length&&!enviada) L.push("Falta enviar a Dennis");
       if(!L.length) L.push("Lista para cerrar");
     }
     if(proc&&proc>hasta) L.push("Por auditar");
@@ -200,8 +198,7 @@ function apTabla(rows){
       <td data-label="Avance" class="r">${pct==null?"—":`<span class="mini-prog"><i style="width:${pct}%"></i></span>${x.hechas}/${x.filas}`}</td>
       <td data-label="Abiertos" class="r">${x.run?(x.abiertos||"—"):""}</td>
       <td data-label="Terminada">${x.terminada?`<span class="ap-ok">✓ ${apFecha(x.terminada)}</span>`:x.run?'<span class="muted">en curso</span>':"—"}</td>
-      <td>${x.estado==="Lista para cerrar"?`<button class="btn primary sm" data-ap-cerrar="${x.run.id}">Cerrar auditoría</button>`
-        :x.estado==="Falta enviar a Dennis"?`<button class="btn ghost sm" data-ap-enviada="${x.run.id}" title="Marcar que ya se le mandó la respuesta HECHA">Enviada a Dennis</button>`:""}</td></tr>`; }).join("")}
+      <td>${x.estado==="Lista para cerrar"?`<button class="btn primary sm" data-ap-cerrar="${x.run.id}">Cerrar auditoría</button>`:""}</td></tr>`; }).join("")}
     </tbody></table></div>`;
 }
 
@@ -337,7 +334,6 @@ function apBind(todas){
   $("#ap-dir")?.addEventListener("click",()=>{ AP.dir=-AP.dir; renderView(); });
   $$("[data-ap-sort]").forEach(t=>t.addEventListener("click",()=>{ const k=t.dataset.apSort; if(AP.orden===k) AP.dir=-AP.dir; else { AP.orden=k; AP.dir=1; } renderView(); }));
   $$("[data-ap-cerrar]").forEach(b=>b.addEventListener("click",()=>apRun(+b.dataset.apCerrar,{ estado:"Cerrada" },"Auditoría cerrada ✓")));
-  $$("[data-ap-enviada]").forEach(b=>b.addEventListener("click",()=>apRun(+b.dataset.apEnviada,{ estado:"Enviada a Dennis" },"Marcada como enviada a Dennis ✓")));
   $$("[data-ap-seg]").forEach(b=>b.addEventListener("click",()=>apSeguimiento(+b.dataset.apSeg,+b.dataset.run)));
   $$("[data-ap-pedir]").forEach(b=>b.addEventListener("click",async ()=>{
     const yo=(typeof quien==="function"&&quien())||prompt("¿Quién se lo pidió a Breana?")||"";
