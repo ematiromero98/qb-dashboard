@@ -255,10 +255,15 @@ function renderBookkeeper(){
     const hoy=rows.filter(r=>r.estado==="Reconciliado"&&r.fecha_completado===_hoy).length;
     // empresas de este bookkeeper
     const cliMap=new Map();
-    rows.forEach(r=>{ const k=r.cliente; const o=cliMap.get(k)||{tot:0,rec:0}; o.tot++; if(r.estado==="Reconciliado")o.rec++; cliMap.set(k,o); });
-    // empresas primero las que faltan, después alfabético
-    const clis=[...cliMap.entries()].sort((a,b)=>{ const da=a[1].rec===a[1].tot, db=b[1].rec===b[1].tot; if(da!==db) return da?1:-1; return a[0].localeCompare(b[0]); });
-    const doneCli=clis.filter(([,o])=>o.rec===o.tot).length;
+    // Las cuentas Inactive no cuentan: una empresa con todas sus cuentas activas reconciliadas queda hecha (verde),
+    // aunque tenga alguna inactiva (SAM AG 5/6 → 5/5). Una empresa sin cuentas activas va al final, sin contar.
+    rows.forEach(r=>{ const k=r.cliente; const o=cliMap.get(k)||{tot:0,rec:0}; if(r.estado!=="Inactive"){ o.tot++; if(r.estado==="Reconciliado")o.rec++; } cliMap.set(k,o); });
+    const hecha=(o)=>o.tot>0&&o.rec===o.tot;
+    // empresas primero las que faltan, después las hechas, al final las inactivas; dentro, alfabético
+    const rank=(o)=>o.tot===0?2:(hecha(o)?1:0);
+    const clis=[...cliMap.entries()].sort((a,b)=>rank(a[1])-rank(b[1]) || a[0].localeCompare(b[0]));
+    const conAct=clis.filter(([,o])=>o.tot>0).length;
+    const doneCli=clis.filter(([,o])=>hecha(o)).length;
     // desglose por prioridad (empresas, cuentas activas y pendientes de hacer)
     const cuentasPrio={ "Alta":0,"Media":0,"Baja":0,"Sales Tax":0 };
     const pendPrio={ "Alta":0,"Media":0,"Baja":0,"Sales Tax":0 };
@@ -281,9 +286,9 @@ function renderBookkeeper(){
       <div class="bk-prio"><span class="bk-prio-l">Empresas x prioridad</span>${prioChips(empPrioCount)}</div>
       <div class="bk-prio"><span class="bk-prio-l">Cuentas x prioridad</span>${prioChips(cuentasPrio)}</div>
       <div class="bk-prio"><span class="bk-prio-l">Pendientes x prioridad</span>${prioChips(pendPrio)}</div>
-      <div class="bk-cli-head">Empresas <span>${doneCli}/${cliMap.size} listas</span></div>
+      <div class="bk-cli-head">Empresas <span>${doneCli}/${conAct} listas</span></div>
       <div class="bk-clientes">${clis.map(([nm,o])=>`
-        <div class="bk-cli ${o.rec===o.tot?'done':''}"><span class="nm">${esc(nm)}</span><span class="st">${o.rec}/${o.tot}</span></div>`).join("")}</div>
+        <div class="bk-cli ${hecha(o)?'done':''} ${o.tot===0?'inact':''}"><span class="nm">${esc(nm)}</span><span class="st">${o.tot===0?'inactiva':o.rec+'/'+o.tot}</span></div>`).join("")}</div>
     </div>`;
   });
   html+=`</div>`;
